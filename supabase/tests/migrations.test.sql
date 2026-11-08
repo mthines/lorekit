@@ -55,6 +55,9 @@ values
   -- §118's own account: its label catalog and its pivot grid must each exceed
   -- 1000 rows from its own lessons alone.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000ab', 'authenticated', 'authenticated', 'lk-mig-ab@test.local', now(), now()),
+  -- §119's own account, plus the foreign tenant its probe assertion needs.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000ac', 'authenticated', 'authenticated', 'lk-mig-ac@test.local', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000ad', 'authenticated', 'authenticated', 'lk-mig-ad@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -479,6 +482,10 @@ declare
   v_denied_viewer boolean := false;
   v_denied_nonmember boolean := false;
 begin
+  -- This section calls memory_write the way the edge's api_key path does: a
+  -- verified service-role connection naming the token owner (00119 ignores
+  -- p_user_id for any other caller). Earlier sections leave their claims set.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   -- A write-capable member (owner) writes org-owned lore: org_id set, user_id
   -- NULL. Two statements, not one nested subquery: a single SQL statement's
   -- snapshot does not reliably see a row inserted by a volatile function
@@ -582,6 +589,8 @@ declare
   v_row memories%rowtype;
   v_backdate constant timestamptz := timestamptz '2020-01-01T00:00:00Z';
 begin
+  -- 00119 ignores p_user_id unless the connection is service-role; earlier sections leave their claims set.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   -- Owner (A) creates the org row with a backdated created_at.
   select id into v_id from memory_write('00000000-0000-0000-0000-0000000000a1', 'global', 'p2-clobber-key', 'v1',
                                         '{}'::text[], null, null, v_backdate, 'phase2-org');
@@ -1463,6 +1472,8 @@ declare
   v_row memories%rowtype;
   v_id uuid;
 begin
+  -- 00119 ignores p_user_id unless the connection is service-role; earlier sections leave their claims set.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   -- Member B, no explicit org → routed to the bound org, author recorded.
   select id, org_routed, binding_org_slug into v_id, v_org_routed, v_slug
     from memory_write('00000000-0000-0000-0000-0000000000b2', 'repo::acme/sb', 'sb-key', 'v1');
@@ -1881,6 +1892,8 @@ declare
   v_blocked    boolean;
   v_prev_claims text;
 begin
+  -- 00119 ignores p_user_id unless the connection is service-role; earlier sections leave their claims set.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   -- AC-1: Write a memory with p_ttl_seconds=604800 (7 days); expires_at must be ~7 days ahead.
   select id, expires_at into v_id, v_expires_at
   from memory_write(v_uid, 'global', 'ttl-test-7d', 'transient value', '{}', null, null, null, null, 604800);
@@ -3509,8 +3522,9 @@ $$;
 do $$
 declare
   -- 00069 appended the key restriction (p_key_scopes, p_key_org_access,
-  -- p_key_org_ids → 20 args).
-  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text, text[], text, uuid[])';
+  -- p_key_org_ids → 20 args); 00119 inserted p_attributes, p_content_type and
+  -- p_supersedes after p_host (23 args).
+  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text, jsonb, text, uuid, text[], text, uuid[])';
 begin
   assert has_function_privilege('anon', v_sig, 'EXECUTE'),
     'origin: anon must have EXECUTE on the widened memory_write';
@@ -10241,6 +10255,8 @@ declare
   v_row memories%rowtype;
   v_id uuid;
 begin
+  -- 00119 ignores p_user_id unless the connection is service-role; earlier sections leave their claims set.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   select id, org_routed, binding_org_slug into v_id, v_org_routed, v_slug
     from memory_write('00000000-0000-0000-0000-0000000000d4', 'repo::wild/nonmember', 'w-nonmember', 'v1');
   assert ((not v_org_routed) and v_slug = 'wild-b'),
@@ -11770,6 +11786,250 @@ begin
   end loop;
 end;
 $$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §119 — 00119: attributes, content_type, supersedes, and citing by id
+--
+-- AC-3 of feat/memory-format-extensions: attributes MERGE on update (a null
+-- removes a key), content_type is checked and a JSON body must parse, a
+-- citation by id is credited, and a `supersedes` naming a memory the caller
+-- cannot read fails exactly like one that does not exist.
+-- ═══════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  v_me      uuid := '00000000-0000-0000-0000-0000000000ac';
+  v_other   uuid := '00000000-0000-0000-0000-0000000000ad';
+  v_old     uuid;
+  v_new     uuid;
+  v_foreign uuid;
+  v_attrs   jsonb;
+  v_ct      text;
+  v_sup     uuid;
+  v_n       integer;
+  v_err_foreign text;
+  v_err_missing text;
+  v_err_scope   text;
+  v_ts          timestamptz;
+  v_moved       uuid;
+begin
+  -- ── Defaults: a write that names none of the new fields is unchanged ──────
+  select id, attributes, content_type, supersedes into v_old, v_attrs, v_ct, v_sup
+    from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '119-old', p_value => 'v');
+  assert v_attrs = '{}'::jsonb and v_ct = 'text/markdown' and v_sup is null,
+    format('119 AC-3a: defaults must be {} / text/markdown / null, got %s / %s / %s', v_attrs, v_ct, v_sup);
+
+  -- ── attributes merge on update; null removes a key ──────────────────────
+  perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '119-attrs', p_value => 'v',
+    p_attributes => '{"ci.run_url": "https://ci/1", "vcs.pr": 7}'::jsonb);
+  select attributes into v_attrs
+    from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '119-attrs', p_value => 'v2',
+      p_attributes => '{"vcs.pr": null, "team": "core"}'::jsonb);
+  assert v_attrs = '{"ci.run_url": "https://ci/1", "team": "core"}'::jsonb,
+    format('119 AC-3b: attributes must merge and drop null keys, got %s', v_attrs);
+
+  -- A write that omits attributes keeps them.
+  select attributes into v_attrs
+    from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '119-attrs', p_value => 'v3');
+  assert v_attrs = '{"ci.run_url": "https://ci/1", "team": "core"}'::jsonb,
+    format('119 AC-3c: an update without attributes must keep them, got %s', v_attrs);
+
+  -- ── content_type is checked; a JSON body must parse ─────────────────────
+  select content_type into v_ct
+    from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '119-json', p_value => '{"a": 1}',
+      p_content_type => 'application/json');
+  assert v_ct = 'application/json', format('119 AC-3d: content_type must be stored, got %s', v_ct);
+
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '119-json', p_value => 'not json');
+    assert false, '119 AC-3e: an update must not store a non-JSON body on a JSON record';
+  exception when check_violation then null;
+  end;
+
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '119-html', p_value => 'v',
+      p_content_type => 'text/html');
+    assert false, '119 AC-3f: an unknown content_type must be rejected';
+  exception when check_violation then null;
+  end;
+
+  -- ── supersedes: stored, kept on update, and never a probe ───────────────
+  select id, supersedes into v_new, v_sup
+    from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '119-new', p_value => 'v',
+      p_supersedes => v_old);
+  assert v_sup = v_old, format('119 AC-3g: supersedes must be stored, got %s', v_sup);
+  select supersedes into v_sup
+    from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '119-new', p_value => 'v2');
+  assert v_sup = v_old, format('119 AC-3h: an update must keep supersedes, got %s', v_sup);
+
+  insert into memories (user_id, scope, key, value)
+    values (v_other, 'global', '119-foreign', 'v') returning id into v_foreign;
+
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '119-probe', p_value => 'v',
+      p_supersedes => v_foreign);
+  exception when others then v_err_foreign := sqlstate || ' ' || replace(sqlerrm, v_foreign::text, '<id>');
+  end;
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '119-probe', p_value => 'v',
+      p_supersedes => '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6b');
+  exception when others then
+    v_err_missing := sqlstate || ' ' || replace(sqlerrm, '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6b', '<id>');
+  end;
+  assert v_err_foreign is not null and v_err_foreign = v_err_missing,
+    format('119 AC-3i: another tenant''s id must fail exactly like a missing one, got %L vs %L',
+           v_err_foreign, v_err_missing);
+  assert v_err_foreign like 'P0001 supersedes_not_found:%',
+    format('119 AC-3j: the error must be supersedes_not_found, got %L', v_err_foreign);
+
+  -- A key restricted to another scope cannot link to (or probe) a global memory.
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'project::x', p_key => '119-scoped', p_value => 'v',
+      p_supersedes => v_old, p_key_scopes => array['project::x']);
+  exception when others then v_err_scope := sqlstate || ' ' || replace(sqlerrm, v_old::text, '<id>');
+  end;
+  assert v_err_scope = v_err_missing,
+    format('119 AC-3k: an out-of-scope id must fail like a missing one, got %L', v_err_scope);
+
+  -- ── a citation by id is credited, inside the caller's tenancy only ──────
+  v_n := lorekit_record_memory_citations(v_me, v_new, '{}', '{}', 'run-119', array[v_old, v_foreign]);
+  assert v_n = 1, format('119 AC-3l: one own id must be credited and the foreign one skipped, got %s', v_n);
+  select cited_count into v_n from memories where id = v_old;
+  assert v_n = 1, format('119 AC-3m: the cited lesson must carry the count, got %s', v_n);
+  select cited_count into v_n from memories where id = v_foreign;
+  assert v_n = 0, format('119 AC-3n: a foreign lesson must not be credited, got %s', v_n);
+  v_n := lorekit_record_memory_citations(v_me, v_old, '{}', '{}', 'run-119b', array[v_old]);
+  assert v_n = 0, format('119 AC-3o: a lesson must not cite itself by id, got %s', v_n);
+
+  -- ── a direct authenticated write cannot link to (or probe) a foreign id ─
+  v_err_foreign := null;
+  v_err_missing := null;
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000ac","role":"authenticated"}', true);
+  begin
+    update memories set supersedes = v_foreign where id = v_new;
+  exception when others then v_err_foreign := sqlstate || ' ' || replace(sqlerrm, v_foreign::text, '<id>');
+  end;
+  begin
+    update memories set supersedes = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6b' where id = v_new;
+  exception when others then
+    v_err_missing := sqlstate || ' ' || replace(sqlerrm, '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6b', '<id>');
+  end;
+  reset role;
+  assert v_err_foreign like 'P0001 supersedes_not_found:%' and v_err_foreign = v_err_missing,
+    format('119 AC-3q: a direct write must fail on a foreign id exactly like a missing one, got %L vs %L',
+           v_err_foreign, v_err_missing);
+
+  -- ── moving a linked row to another owner re-checks the link ─────────────
+  insert into org_members (org_id, user_id, role)
+    values ('00000000-0000-0000-0000-0000000000f1', v_me, 'member');
+  insert into memories (user_id, scope, key, value, supersedes)
+    values (v_me, 'global', '119-moved', 'v', v_old) returning id into v_moved;
+  v_err_foreign := null;
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000ac","role":"authenticated"}', true);
+  begin
+    update memories set org_id = '00000000-0000-0000-0000-0000000000f1' where id = v_moved;
+  exception when others then v_err_foreign := sqlstate || ' ' || replace(sqlerrm, v_old::text, '<id>');
+  end;
+  reset role;
+  assert v_err_foreign like 'P0001 supersedes_not_found:%',
+    format('119 AC-3t: moving a row with a personal link into an org must fail, got %L', v_err_foreign);
+
+  -- ── the stored attribute map is capped at 32 keys, merges included ──────
+  begin
+    update memories
+       set attributes = (select jsonb_object_agg('k' || i, i) from generate_series(1, 33) i)
+     where id = v_new;
+    v_err_scope := null;
+  exception when check_violation then v_err_scope := sqlerrm;
+  end;
+  assert v_err_scope like '%memories_attributes_max_keys%',
+    format('119 AC-3r: 33 stored attribute keys must violate the cap, got %L', v_err_scope);
+
+  -- ── hard-deleting the target clears the link, without touching updated_at
+  select updated_at into v_ts from memories where id = v_new;
+  delete from memories where id = v_old;
+  select supersedes into v_sup from memories where id = v_new;
+  assert v_sup is null, format('119 AC-3p: a deleted target must clear supersedes, got %s', v_sup);
+  assert (select updated_at from memories where id = v_new) = v_ts,
+    '119 AC-3s: clearing a link because its target was deleted must not bump updated_at';
+end;
+$$;
+
+-- ── AC-4: the actor is the verified caller, never a request field ──────────
+-- memory_write and lorekit_record_memory_citations are SECURITY DEFINER and
+-- granted to anon/authenticated, so a PostgREST caller names any p_user_id it
+-- likes. 00046 closed that for archive/restore/purge; 00119 re-creates both
+-- functions and applies the same rule: a caller-supplied id is honoured only
+-- on a verified service-role connection (or a direct one with no JWT role).
+do $$
+declare
+  v_me      constant uuid := '00000000-0000-0000-0000-0000000000ac';
+  v_other   constant uuid := '00000000-0000-0000-0000-0000000000ad';
+  v_citing  uuid;
+  v_n       integer;
+  v_err     text;
+begin
+  -- An authenticated caller naming ANOTHER user writes as ITSELF.
+  set local role authenticated;
+  perform set_config('request.jwt.claims', format('{"sub":"%s","role":"authenticated"}', v_me), true);
+  select id into v_citing from memory_write(
+    p_user_id => v_other, p_scope => 'global', p_key => '119-actor', p_value => 'v');
+  perform memory_write(
+    p_user_id => v_other, p_scope => 'global', p_key => '119-actor-cited', p_value => 'v');
+  -- ...and its citations resolve in ITS OWN lore, not the named user's.
+  select lorekit_record_memory_citations(
+    p_user_id => v_other, p_citing_memory_id => v_citing,
+    p_cited_scopes => array['global'], p_cited_keys => array['119-actor-cited'],
+    p_correlation_id => '119-ac4') into v_n;
+  reset role;
+  assert (select count(*) from memories where key = '119-actor' and user_id = v_me) = 1,
+    '119 AC-4a: a foreign p_user_id from an authenticated caller must be ignored; the row belongs to the caller';
+  assert (select count(*) from memories where key like '119-actor%' and user_id = v_other) = 0,
+    '119 AC-4b: nothing may be written as the user the caller named';
+  assert v_n = 1,
+    format('119 AC-4c: a citation must resolve under the caller''s own lore, got %s', v_n);
+
+  -- A caller with no identity at all is refused, not treated as the service tier.
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin
+    perform memory_write(p_user_id => v_other, p_scope => 'global', p_key => '119-anon', p_value => 'v');
+    v_err := null;
+  exception when others then v_err := sqlstate || ' ' || sqlerrm;
+  end;
+  reset role;
+  assert v_err = 'LK002 not_authenticated',
+    format('119 AC-4d: an anonymous memory_write must raise LK002 not_authenticated, got %L', v_err);
+  assert not exists (select 1 from memories where key = '119-anon'),
+    '119 AC-4e: an anonymous write must leave no row';
+
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  -- A citation never breaks the write it accompanies, so it swallows the refusal
+  -- and returns 0; the property is that an anonymous caller naming the REAL
+  -- owner (whose lore it would otherwise resolve) credits nothing.
+  select lorekit_record_memory_citations(
+    p_user_id => v_me, p_citing_memory_id => v_citing,
+    p_cited_scopes => array['global'], p_cited_keys => array['119-actor-cited'],
+    p_correlation_id => '119-ac4-anon') into v_n;
+  reset role;
+  assert v_n = 0,
+    format('119 AC-4f: an anonymous citation must credit nothing, got %s', v_n);
+
+  -- A verified service-role connection (the edge/MCP api_key path) still names the user.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  perform memory_write(p_user_id => v_other, p_scope => 'global', p_key => '119-svc', p_value => 'v');
+  reset role;
+  assert (select count(*) from memories where key = '119-svc' and user_id = v_other) = 1,
+    '119 AC-4g: a service-role caller must still be able to name the user';
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 
 rollback;
 

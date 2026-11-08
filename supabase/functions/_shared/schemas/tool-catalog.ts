@@ -357,14 +357,31 @@ export const MCP_TOOLS = [
           type: 'array',
           items: { type: 'string' },
           description:
-            'The lessons that actually shaped this run, as `scope::key` strings — exactly the labels they were injected under. Name only the ones you applied; an empty or omitted list is the honest answer when none were. Silently ignored where a reference names nothing you can see, so a wrong guess costs nothing and the write always succeeds.',
+            'The lessons that actually shaped this run, as `scope::key` strings — exactly the labels they were injected under — or as memory ids, which keep naming a lesson after its scope or key changes. Name only the ones you applied; an empty or omitted list is the honest answer when none were. Silently ignored where a reference names nothing you can see, so a wrong guess costs nothing and the write always succeeds.',
+        },
+        attributes: {
+          type: 'object',
+          description:
+            'Open metadata as namespaced keys with scalar values, e.g. `{"ci.run_url": "https://…", "vcs.pr": 482}`. Keys are lowercase and dot-separated; at most 32 keys, each key at most 128 characters and each string value at most 1024. On an update the map is MERGED into what is stored, and a key set to null is removed.',
+        },
+        content_type: {
+          type: 'string',
+          enum: ['text/markdown', 'application/json'],
+          description:
+            'What `value` is. Defaults to `text/markdown`. With `application/json` the value must parse as JSON. Omit on an update to keep the stored type.',
+        },
+        supersedes: {
+          type: 'string',
+          description:
+            'The id of the memory this one replaces (from `memory.read`). Must name a memory this token can read that has the same owner as the one being written (personal to personal, or the same org); anything else is rejected as not found. Kept on update unless re-supplied.',
         },
       },
     },
     returns:
-      '`{ "id": "<uuid>", "created_at": "<iso>" }` — plus optional `"expires_at"` and `"notice"` (when a write fell back to personal because the scope is bound to an org the caller cannot write to).',
+      '`{ "id": "<uuid>", "created_at": "<iso>" }` — the `id` is stable across updates and is what `supersedes` and `cited` accept — plus optional `"expires_at"` and `"notice"` (when a write fell back to personal because the scope is bound to an org the caller cannot write to).',
     notes: [
       '**Provenance (`origin_*`):** `scope` says where a lesson *applies*; the four `origin_*` fields say where it was *recorded from*. Each is independently optional and the last KNOWN value wins — on an update, a field you omit keeps whatever a previous write recorded rather than being erased. A malformed value is rejected, never silently dropped.',
+      '**Record extensions (`attributes`, `content_type`, `supersedes`):** additive, and a write that omits them behaves exactly as before. `attributes` holds metadata no column anticipates — a CI run URL, a PR number, an owning team — under namespaced keys; it is merged on update, so name only the keys you change. `content_type: "application/json"` marks a value a program should parse (a CI result, a structured finding), and the server rejects one that does not parse. `supersedes` links a corrected lesson to the one it replaces, by the old one\u2019s `id`, so the history survives a re-key; the target must have the same owner as the memory being written (personal to personal, or the same org), and any other id, including one you cannot read, is rejected exactly like one that does not exist.',
       '**Citations (`cited`):** the one signal read counts cannot produce. A lesson injected at session start is already in your context and is applied without ever being fetched, so LoreKit can measure whether lore was *looked up* but not whether it *worked* — `cited` is where you say so. Each entry is a `scope::key` you were shown; they raise the cited lesson\u2019s `cited_count` and are grouped by the run\u2019s correlation id. Recorded once per run, so a retried write does not inflate anything, and every failure mode is silent: an unknown reference, a self-citation, and anything past 32 entries are dropped and the write still succeeds.',
       '**Scope→org binding:** An org admin can bind a scope (e.g. a repo) — or a WILDCARD prefix such as `repo::owner/*` or `branch::owner/repo::*`, matching every scope under it — to an org. A write under a bound scope with no explicit `org` auto-routes to that org for write-capable members, resolved MOST-SPECIFIC-WINS when several bindings match (an exact scope beats any wildcard; a longer wildcard prefix beats a shorter one). A non-member\u2019s write falls back to personal (never rejected) with a `notice` \u2014 except from a token limited to selected orgs (`orgs_only`), which may not write personal memories: that write is refused, so pass `org`.',
     ],
@@ -396,7 +413,7 @@ export const MCP_TOOLS = [
         refs: { type: 'array', items: { type: 'string' }, description: 'Batch mode: one or more `scope::key` references, fetched in a single call. Cannot be combined with `scope`/`key`. Each entry is parsed by the same reference grammar `memory.write`\'s `cited` field uses (`scope::key`, verbatim scope — never lowercased). Silently truncated past 32 entries.' },
       },
     },
-    returns: '`{ "value": "<markdown>", "updated_at": "<iso>", "scope": "<scope>" }` or `null` if not found. `scope` names the scope that ANSWERED — always present, so an unscoped read can tell a `global` hit from a `repo::…` one. When the key also existed in other scopes, an additional `other_scopes` array names them in precedence order; it is omitted entirely when the key was unambiguous. With `refs`, instead returns `{ "entries": [{ "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }` — `missing` names every well-formed reference within the first 32 that matched no lesson.',
+    returns: '`{ "id": "<uuid>", "value": "<markdown>", "updated_at": "<iso>", "scope": "<scope>" }` or `null` if not found. `id` is the record\u2019s stable identity — the value `supersedes` and `cited` accept. `attributes`, `content_type` and `supersedes` appear only when they hold something other than their default (an empty map, `text/markdown`, no link). `scope` names the scope that ANSWERED — always present, so an unscoped read can tell a `global` hit from a `repo::…` one. When the key also existed in other scopes, an additional `other_scopes` array names them in precedence order; it is omitted entirely when the key was unambiguous. With `refs`, instead returns `{ "entries": [{ "id", "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }` — `missing` names every well-formed reference within the first 32 that matched no lesson.',
     notes: [
       '**Scope is optional.** `memory.read { key }` with no scope resolves that key across every scope you can see and returns the most specific match — `project` beats `branch` beats `repo` beats `global`, with ties broken by most-recently-updated then scope ascending. This is the shape to use when a key reached you through a session-start injection and you do not know which scope it came from. Pass `scope` when you DO know it: it is one indexed row instead of a fan-out, and it removes the ambiguity entirely. Either way the response names the scope that answered.',
       '**Exactly one of two argument shapes is required:** `key` (optionally with `scope`) for a single read, **or** `refs` alone for a batch read. They cannot be combined — a call carrying both is rejected, and so is one carrying neither. No argument is required on its own, which is why none is marked required above: the table cannot express "one of these two groups", so this rule is the whole of it. The schema deliberately does NOT advertise the alternatives as a top-level `oneOf` either — Amazon Bedrock rejects a tool whose `input_schema` carries one, and it fails the entire request rather than that one tool. Both shapes are validated by the server on every call regardless.',

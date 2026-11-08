@@ -107,6 +107,10 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `origin_branch` | | Provenance: the git branch the lesson was recorded from. Stored **verbatim** (case-sensitive) so the dashboard's `/tree/` link resolves. |
 | `origin_commit` | | Provenance: the commit SHA (7–40 hex characters) checked out when the lesson was recorded. |
 | `origin_pr` | | Provenance: the pull request number the lesson came out of. Rendered as a link to the PR when combined with `origin_repo`. |
+| `attributes` | | Open metadata: an object of namespaced keys (lowercase, dot-separated, e.g. `ci.run_url`, `vcs.pr`) to string, number or boolean values. At most 32 keys; a key is at most 128 characters and a string value at most 1024. **Merged** on update; a key set to `null` is removed. |
+| `content_type` | | `text/markdown` (default) or `application/json`. With `application/json` the value must parse. Omit on an update to keep the stored type. |
+| `supersedes` | | The `id` of the memory this one replaces. Must name a memory this token can read **and** that has the same owner as the one being written: your own personal memory for a personal write, a memory in the same org for an org write. Anything else, including an id that does not exist, fails with the same error, so the field cannot be used to probe for ids. Kept on update unless re-supplied. |
+| `cited` | | Lessons that shaped this run, as `scope::key` strings or memory ids. Unresolvable entries are dropped silently. |
 
 **Provenance (`origin_*`).** `scope` says where a lesson **applies**; the four
 `origin_*` fields say where it was **recorded from**, and the dashboard turns
@@ -136,6 +140,32 @@ friends to override. Over the hosted MCP server the client has to supply them �
 the server can only see what the call carries. The GitHub webhook receiver
 records the PR, head branch, and head SHA of the delivery it ingested.
 
+**Record extensions (`attributes` / `content_type` / `supersedes`).** Three
+optional fields, added by migration 00119, for what the fixed columns cannot
+say. A write that omits all three behaves exactly as before.
+
+- `attributes` is where tool-specific metadata goes instead of being packed into
+  tags: `{"ci.run_url": "https://…", "vcs.pr": 482}`. Values are scalars. On an
+  update the map is merged into what is stored, so a write names only the keys
+  it changes, and `null` deletes a key.
+- `content_type: "application/json"` marks a value meant for a program (a CI
+  result, a structured finding). The value must parse, on this write and on any
+  later update that keeps the type.
+- `supersedes` records that this memory replaces another, by the other's `id`
+  (returned by `memory.write` and `memory.read`). The id survives a change of
+  scope or key, which a `scope::key` reference does not. The server checks that
+  you can read the target with this token and that it has the same owner as
+  the memory being written (personal to personal, or the same org), and
+  answers the same way for a
+  target that is invisible to you and one that does not exist, so the field
+  cannot be used to probe for other tenants' ids.
+
+All three are validated by the shared parser in
+`packages/mcp-core/src/provenance/record-extensions.ts` (mirrored into
+`supabase/functions/_shared/provenance/`), so MCP and REST reject the same
+inputs with the same message. `PATCH /memories/:id` does not accept them; set
+them with a write.
+
 **Taxonomy (`kind` / `host`).** A self-improvement loop's bucket carries two
 facts: WHAT KIND of memory it is and WHICH HOST owns it. `kind` is a closed
 vocabulary — `lesson` (procedural, read every run), `bus` (a transient outcome
@@ -150,7 +180,7 @@ an update the last KNOWN value wins, exactly like `origin_*`.
 
 **Scope→org binding.** If you omit `org` but the scope is **bound to an org** (an admin set that up — see [org-sharing.md](./org-sharing.md#scope--org-binding-auto-routing)), the write auto-routes to that org **when you're a write-capable member**. A binding can also be a **wildcard prefix** (`repo::owner/*`), and when several bindings match, resolution is **most-specific-wins** (an exact scope beats any wildcard; a longer wildcard prefix beats a shorter one). If you're *not* a member of the winning org, it's saved to your personal lore instead (never rejected) and the response carries a `notice` explaining that — unless your token is limited to selected orgs (`orgs_only`), which may not write personal memories: that write is refused with an in-band `isError` result (`key_personal_denied`), so pass `org`. An explicit `org` always overrides binding resolution entirely.
 
-**Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }` — plus an optional `"expires_at": "<iso>"` when any `ttl_*` field was supplied, and an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
+**Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }` — the `id` is the memory's stable identity, kept across updates — plus an optional `"expires_at": "<iso>"` when any `ttl_*` field was supplied, and an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
 
 **Default TTL — there isn't one, server-side.** Omitting every `ttl_*` field
 means the memory never expires, and that is unchanged. Two things nonetheless
@@ -188,8 +218,9 @@ scope you can see (see [Unscoped reads](#unscoped-reads)).
 }
 ```
 
-**Returns:** `{ "value": "<markdown>", "updated_at": "<iso>", "scope": "<canonical scope>" }`, or
-`null` if not found. `scope` names the scope that actually answered — the same value you passed when
+**Returns:** `{ "id": "<uuid>", "value": "<markdown>", "updated_at": "<iso>", "scope": "<canonical scope>" }`, or
+`null` if not found. `id` is the memory's stable identity (what `supersedes` and `cited` accept).
+`attributes`, `content_type` and `supersedes` are included only when they hold a non-default value. `scope` names the scope that actually answered — the same value you passed when
 you passed one, and the resolved winner when you did not. An ambiguous unscoped read additionally
 carries `other_scopes: ["<scope>", …]`, every OTHER scope the key also exists in.
 

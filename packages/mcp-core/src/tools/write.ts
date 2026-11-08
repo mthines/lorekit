@@ -8,6 +8,7 @@ import { translateOrgPermissionError } from '../auth/org-permissions.js';
 import { parseCreatedAt } from '../limits/created-at.js';
 import { parseTtl } from '../limits/ttl.js';
 import { parseOrigin } from '../provenance/origin.js';
+import { parseRecordFields, translateRecordFieldDbError } from '../provenance/record-extensions.js';
 import { recordAudit } from '../audit/audit.js';
 import { MemoryKindSchema, resolveKindHost } from '@lorekit/schemas';
 
@@ -55,6 +56,11 @@ export const WriteInputSchema = z.object({
   origin_branch: z.string().optional(),
   origin_commit: z.string().optional(),
   origin_pr: z.union([z.number(), z.string()]).optional(),
+  // Record extensions (00119): typed loosely here and validated by
+  // parseRecordFields below, so the rules stay shared with the edge mirror.
+  attributes: z.record(z.unknown()).optional(),
+  content_type: z.string().optional(),
+  supersedes: z.string().optional(),
 });
 
 export type WriteInput = z.infer<typeof WriteInputSchema>;
@@ -74,6 +80,7 @@ export async function write(
     ttl_seconds: input.ttl_seconds,
   });
   const origin = parseOrigin(input);
+  const record = parseRecordFields(input, input.value);
   // Explicit kind/host win; otherwise recover them from the loop tag (the shared
   // resolver owns the vocabulary check + host-length clamp). Null when neither is
   // available, leaving the columns NULL (a non-loop write).
@@ -137,10 +144,13 @@ export async function write(
             p_origin_pr: origin.pr,
             p_kind: kind,
             p_host: host,
+            p_attributes: record.attributes,
+            p_content_type: record.contentType,
+            p_supersedes: record.supersedes,
           })
           .single();
 
-        if (error) throw translateOrgPermissionError(translateCapError(error));
+        if (error) throw translateRecordFieldDbError(translateOrgPermissionError(translateCapError(error)));
 
         const row = data as {
           id: string;

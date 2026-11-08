@@ -33,6 +33,10 @@ test('serializeEntry / parseEntry round-trip', () => {
     seen_count: null,
     kind: null,
     host: null,
+    id: null,
+    attributes: null,
+    content_type: null,
+    supersedes: null,
     value: 'First line of the lesson.\nSecond line with details.',
   };
   const parsed = parseEntry(serializeEntry(entry));
@@ -290,6 +294,10 @@ test('putEntry upserts verbatim by scope+key, preserving created/updated/archive
     seen_count: null,
     kind: null,
     host: null,
+    id: 'ce0b05d7-e419-4d08-b890-d2483b802a0f',
+    attributes: { 'ci.run_url': 'https://ci.example/1' },
+    content_type: null,
+    supersedes: null,
     value: 'preserved body',
   };
   await store.putEntry(entry);
@@ -436,6 +444,10 @@ test('origin fields round-trip through the on-disk format', () => {
     seen_count: null,
     kind: null,
     host: null,
+    id: null,
+    attributes: null,
+    content_type: null,
+    supersedes: null,
     value: 'A lesson learned in a pull request.',
   };
   assert.deepEqual(parseEntry(serializeEntry(entry)), entry);

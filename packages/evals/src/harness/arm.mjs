@@ -234,7 +234,9 @@ export async function prepareArm(
  * reported the clean room CONTAMINATED. Only an explicit
  * `"<name>@builtin": false` switches one off.
  *
- * The list is every built-in 2.1.287 ships except `sec-default`, which is
+ * The list is every built-in seen so far (2.1.287, plus `privacy`, which a
+ * later release added and preflight reported as `cc-plugin-privacy`) except
+ * `sec-default`, which is
  * enabled from managed policy only, so a session setting cannot switch it
  * either way. It is a request, like every flag here, so a built-in a later
  * release adds is not silently trusted: preflight names it in a
@@ -247,6 +249,7 @@ export const BUILTIN_PLUGINS = Object.freeze([
   "mermaid",
   "mods-guide",
   "plugin-authoring",
+  "privacy",
   "responsive-mode",
   "telemetry",
   "tips",
@@ -276,8 +279,16 @@ export const BUILTIN_PLUGINS = Object.freeze([
  */
 export async function writeSettingsOverride(sandbox) {
   const file = path.join(sandbox.root, "claude-settings.json");
+  // BOTH spellings of each id. Claude Code resolves a built-in's key two ways:
+  // a short alias (`agents-md@builtin`) works for most, but `privacy` is only
+  // switched off by its registered name (`cc-plugin-privacy@builtin`), and
+  // that is the name preflight reports. Emitting both is the one form that
+  // does not depend on which a given built-in honours (verified against 2.1.319).
   const enabledPlugins = Object.fromEntries(
-    BUILTIN_PLUGINS.map((name) => [`${name}@builtin`, false]),
+    BUILTIN_PLUGINS.flatMap((name) => [
+      [`${name}@builtin`, false],
+      [`cc-plugin-${name}@builtin`, false],
+    ]),
   );
   await fsp.writeFile(file, JSON.stringify({ enabledPlugins }, null, 2) + "\n");
   return file;

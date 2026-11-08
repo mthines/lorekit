@@ -156,7 +156,23 @@ export const MCP_TOOL_DEFS = [
           "items": {
             "type": "string"
           },
-          "description": "The lessons that actually shaped this run, as `scope::key` strings — exactly the labels they were injected under. Name only the ones you applied; an empty or omitted list is the honest answer when none were. Silently ignored where a reference names nothing you can see, so a wrong guess costs nothing and the write always succeeds."
+          "description": "The lessons that actually shaped this run, as `scope::key` strings — exactly the labels they were injected under — or as memory ids, which keep naming a lesson after its scope or key changes. Name only the ones you applied; an empty or omitted list is the honest answer when none were. Silently ignored where a reference names nothing you can see, so a wrong guess costs nothing and the write always succeeds."
+        },
+        "attributes": {
+          "type": "object",
+          "description": "Open metadata as namespaced keys with scalar values, e.g. `{\"ci.run_url\": \"https://…\", \"vcs.pr\": 482}`. Keys are lowercase and dot-separated; at most 32 keys, each key at most 128 characters and each string value at most 1024. On an update the map is MERGED into what is stored, and a key set to null is removed."
+        },
+        "content_type": {
+          "type": "string",
+          "enum": [
+            "text/markdown",
+            "application/json"
+          ],
+          "description": "What `value` is. Defaults to `text/markdown`. With `application/json` the value must parse as JSON. Omit on an update to keep the stored type."
+        },
+        "supersedes": {
+          "type": "string",
+          "description": "The id of the memory this one replaces (from `memory.read`). Must name a memory this token can read that has the same owner as the one being written (personal to personal, or the same org); anything else is rejected as not found. Kept on update unless re-supplied."
         }
       }
     },

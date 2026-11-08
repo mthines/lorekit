@@ -61,6 +61,19 @@ export {
   type OriginInput,
 } from './provenance/origin.js';
 export {
+  parseRecordFields,
+  splitCitedIds,
+  isMemoryId,
+  RecordFieldError,
+  translateRecordFieldDbError,
+  compactRecordFields,
+  RECORD_FIELD_COLUMNS,
+  CONTENT_TYPES,
+  type ContentType,
+  type RecordFields,
+  type RecordFieldsInput,
+} from './provenance/record-extensions.js';
+export {
   type StorageAdapter,
   createHostedAdapter,
   createBYODAdapter,

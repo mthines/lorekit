@@ -11,6 +11,11 @@ import { CreateMemoryBodySchema } from '../../_shared/schemas/memory.ts';
 import { translateDbError } from '../../_shared/api/errors.ts';
 import { parseCreatedAt, CreatedAtError } from '../../_shared/limits/created-at.ts';
 import { parseOrigin, OriginError } from '../../_shared/provenance/origin.ts';
+import {
+  parseRecordFields,
+  RecordFieldError,
+  translateRecordFieldDbError,
+} from '../../_shared/provenance/record-extensions.ts';
 import { resolveKindHost } from '../../_shared/schemas/tags.ts';
 import { recordAuditDeferred } from '../../_shared/audit/audit.ts';
 import { recordCitations } from '../../_shared/telemetry/citations.ts';
@@ -70,11 +75,15 @@ export async function handleCreate(
   // rules live once in `_shared/provenance/origin.ts` — the module mcp/tools.ts's
   // toolWrite calls — and a malformed value is a 400 naming the problem rather
   // than a silently dropped origin.
+  // The record extensions (00119) follow the same posture through the parser
+  // mcp/tools.ts's toolWrite also uses.
   let origin;
+  let record;
   try {
     origin = parseOrigin(body);
+    record = parseRecordFields(body, body.value);
   } catch (err) {
-    if (err instanceof OriginError) return badRequest(err.message, undefined, cors);
+    if (err instanceof OriginError || err instanceof RecordFieldError) return badRequest(err.message, undefined, cors);
     throw err;
   }
 
@@ -135,6 +144,9 @@ export async function handleCreate(
     p_origin_pr: origin.pr,
     p_kind: kind,
     p_host: host,
+    p_attributes: record.attributes,
+    p_content_type: record.contentType,
+    p_supersedes: record.supersedes,
     // The calling key's restriction, BOTH axes (00068/00069). The RPC is the
     // last gate the edge cannot bypass — it runs on the service-role client, so
     // the `firstDeniedScope` refusal above is advisory — and the only place that
@@ -148,6 +160,8 @@ export async function handleCreate(
   }).single();
 
   if (error) {
+    const fieldError = translateRecordFieldDbError(error);
+    if (fieldError instanceof RecordFieldError) return badRequest(fieldError.message, undefined, cors);
     const mapped = translateDbError(error);
     if (mapped) return mapped.toResponse(cors);
     span.error(`DB: ${error.message}`);
@@ -170,6 +184,8 @@ export async function handleCreate(
     archived_at: string | null; origin_repo: string | null; origin_branch: string | null;
     origin_commit: string | null; origin_pr: number | null; kind: string | null;
     host: string | null; seen_count: number | null;
+    attributes: Record<string, string | number | boolean> | null; content_type: string | null;
+    supersedes: string | null;
   };
   const row = data as MemoryWriteRow | null;
   if (!row?.id) {
@@ -183,6 +199,8 @@ export async function handleCreate(
     updated_at: row.updated_at, expires_at: row.expires_at, archived_at: row.archived_at,
     origin_repo: row.origin_repo, origin_branch: row.origin_branch, origin_commit: row.origin_commit,
     origin_pr: row.origin_pr, kind: row.kind, host: row.host, seen_count: row.seen_count ?? undefined,
+    attributes: row.attributes ?? undefined, content_type: row.content_type ?? undefined,
+    supersedes: row.supersedes,
   };
 
   // Queue the embedding. Returns synchronously and is a no-op unless embedding

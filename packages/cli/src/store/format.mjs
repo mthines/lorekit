@@ -41,11 +41,104 @@ export const FIELDS = [
   // back to inferring from tags for, same as an absent remote value.
   'kind',
   'host',
+  // Record extensions (migration 00119), mirroring the hosted columns.
+  //   id            a uuid minted on the first write and kept on every rewrite —
+  //                 the record's identity, independent of its scope::key address
+  //   attributes    open map of namespaced keys to scalar values
+  //   content_type  null (= text/markdown) or 'application/json'
+  //   supersedes    the id of the record this one replaces
+  // Appended like the columns above.
+  'id',
+  'attributes',
+  'content_type',
+  'supersedes',
 ];
 
+// The content types a record may declare; the first is what null means. The
+// local twin of the hosted `memories_content_type_known` constraint.
+export const CONTENT_TYPES = ['text/markdown', 'application/json'];
+
+// Frontmatter fields this version does not know: written by a newer CLI, by
+// another tool sharing the directory, or by hand. Carried through every rewrite
+// so the file format is lossless — a field LoreKit does not understand is not
+// LoreKit's to drop.
+export function extraFields(entry) {
+  const out = {};
+  if (!entry) return out;
+  for (const [k, v] of Object.entries(entry)) {
+    if (k !== 'value' && !FIELDS.includes(k) && v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+// Merge an attributes write into what is stored, the way the hosted
+// `memory_write` does: named keys are replaced, a null value removes its key,
+// and keys the write does not name are kept.
+export function mergeAttributes(stored, incoming) {
+  const merged = { ...(isPlainObject(stored) ? stored : {}), ...(incoming || {}) };
+  for (const k of Object.keys(merged)) if (merged[k] === null) delete merged[k];
+  return merged;
+}
+
+// The local store's gate on the record extensions: the same shape rules the
+// server's shared parser (packages/mcp-core/src/provenance/record-extensions.ts)
+// applies. A twin rather than an import because the CLI is zero-dependency.
+// One server rule has no offline equivalent: the hosted store also rejects a
+// `supersedes` id it cannot find, while a local store cannot know ids that live
+// elsewhere, so it accepts any well-formed one. Returns an error message, or null.
+const ATTRIBUTE_KEY_RE = /^[a-z0-9_]+(?:[.-][a-z0-9_]+)*$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const ATTRIBUTES_MAX_KEYS = 32;
+const ATTRIBUTE_KEY_MAX = 128;
+const ATTRIBUTE_VALUE_MAX = 1024;
+
+export function recordFieldsIssue({ attributes, content_type, supersedes, value }) {
+  if (attributes != null) {
+    if (!isPlainObject(attributes)) return 'attributes must be an object of key/value pairs';
+    if (Object.keys(attributes).length > ATTRIBUTES_MAX_KEYS) {
+      return `attributes must have <= ${ATTRIBUTES_MAX_KEYS} keys`;
+    }
+    for (const [k, v] of Object.entries(attributes)) {
+      if (k.length > ATTRIBUTE_KEY_MAX || !ATTRIBUTE_KEY_RE.test(k)) {
+        return `attribute key must be lowercase and dot-separated (e.g. "ci.run_url"), <= ${ATTRIBUTE_KEY_MAX} characters: ${k}`;
+      }
+      if (typeof v === 'number' && !Number.isFinite(v)) return `attribute ${k} must be a finite number`;
+      if (typeof v === 'string' && v.length > ATTRIBUTE_VALUE_MAX) {
+        return `attribute ${k} must be <= ${ATTRIBUTE_VALUE_MAX} characters`;
+      }
+      if (v !== null && !['string', 'number', 'boolean'].includes(typeof v)) {
+        return `attribute ${k} must be a string, number, boolean, or null`;
+      }
+    }
+  }
+  if (content_type != null && !CONTENT_TYPES.includes(content_type)) {
+    return `content_type must be one of ${CONTENT_TYPES.join(', ')}: ${content_type}`;
+  }
+  if (content_type === 'application/json') {
+    try {
+      JSON.parse(value);
+    } catch {
+      return 'value must be valid JSON when content_type is application/json';
+    }
+  }
+  if (supersedes != null && !UUID_RE.test(supersedes)) {
+    return `supersedes must be a memory id (uuid): ${supersedes}`;
+  }
+  return null;
+}
+
+function isPlainObject(v) {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 // Serialize an entry ({ ...columns, value }) into file text.
+//
+// Known fields come first, in FIELDS order; any field this version does not know
+// follows, in the order it was read, so a rewrite never drops it.
 export function serializeEntry(entry) {
-  const fm = FIELDS.map((k) => `${k}: ${JSON.stringify(entry[k] ?? null)}`).join('\n');
+  const known = FIELDS.map((k) => `${k}: ${JSON.stringify(entry[k] ?? null)}`);
+  const extra = Object.entries(extraFields(entry)).map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
+  const fm = [...known, ...extra].join('\n');
   const body = entry.value == null ? '' : String(entry.value);
   return `---\n${fm}\n---\n${body}\n`;
 }

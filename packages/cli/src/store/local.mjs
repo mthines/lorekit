@@ -6,8 +6,11 @@
 // and an opt-in per-repo `project` tier — behind the same contract, so callers
 // (`core/lessons`, `hook`, `doctor`, `migrate`) keep talking to one interface.
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { serializeEntry, parseEntry, slugify, scopeToDir } from './format.mjs';
+import {
+  serializeEntry, parseEntry, slugify, scopeToDir, extraFields, mergeAttributes, recordFieldsIssue, ATTRIBUTES_MAX_KEYS,
+} from './format.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
 import { isLive, resolveExpiresAt } from './ttl.mjs';
 import { seenCountOf, withReadFields, updatedAtOf } from './entry-fields.mjs';
@@ -155,9 +158,41 @@ class LocalStore {
   async write({
     scope, key, value, tags, source_agent, trigger, created_at, ttl_days, clear_ttl,
     origin_repo, origin_branch, origin_commit, origin_pr, kind, host,
+    attributes, content_type, supersedes,
   } = {}) {
     const now = new Date().toISOString();
     const existing = this._findByKey(scope, key);
+    // Record extensions keep their stored value when omitted, like origin
+    // below; attributes MERGE. The effective content type is checked against
+    // the value even when only the value changed, as the hosted CHECK is.
+    // Normalised as the server normalises: a content type is matched lowercase
+    // and a supersedes id is stored lowercase.
+    // A write to an ARCHIVED key starts a fresh record on the server (every
+    // conflict target is partial on `archived_at is null`), so the record
+    // extensions start empty here too rather than inheriting the archived ones.
+    const live = existing && !existing.entry.archived_at ? existing.entry : null;
+    // A non-string is an error here as on the server (`parseRecordFields`),
+    // never silently dropped: `supersedes: 42` must not succeed offline only
+    // to fail remotely.
+    if (content_type != null && content_type !== '' && typeof content_type !== 'string') {
+      return { ok: false, error: 'content_type must be a string' };
+    }
+    if (supersedes != null && supersedes !== '' && typeof supersedes !== 'string') {
+      return { ok: false, error: `supersedes must be a memory id (uuid): ${String(supersedes)}` };
+    }
+    const contentType = (typeof content_type === 'string' && content_type.trim()
+      ? content_type.trim().toLowerCase()
+      : null) ?? live?.content_type ?? null;
+    const supersedesId = typeof supersedes === 'string' && supersedes.trim()
+      ? supersedes.trim().toLowerCase()
+      : null;
+    const mergedAttributes = mergeAttributes(live?.attributes, attributes);
+    const issue = recordFieldsIssue({ attributes, content_type: contentType, supersedes: supersedesId, value })
+      ?? (Object.keys(mergedAttributes).length > ATTRIBUTES_MAX_KEYS
+        ? `attributes must have <= ${ATTRIBUTES_MAX_KEYS} keys`
+        : null)
+      ?? (supersedesId && supersedesId === live?.id ? 'a memory cannot supersede itself' : null);
+    if (issue) return { ok: false, error: issue };
     let override, expires_at;
     try {
       override = normalizeCreatedAt(created_at);
@@ -171,6 +206,8 @@ class LocalStore {
     fs.mkdirSync(dir, { recursive: true });
     const created = existing ? existing.entry.created || now : override || now;
     const entry = {
+      // Fields this version does not know survive the rewrite (lossless).
+      ...extraFields(existing?.entry),
       scope,
       key,
       tags: Array.isArray(tags) ? tags : [],
@@ -206,6 +243,14 @@ class LocalStore {
       seen_count: existing && !existing.entry.archived_at
         ? seenCountOf(existing.entry) + 1
         : 1,
+      // Identity: minted once, then kept, so a reference by id survives every
+      // rewrite. A revive of an archived key is a NEW record, as on the server
+      // (which inserts a fresh row), so it gets a new id and can supersede the
+      // archived one.
+      id: live?.id || randomUUID(),
+      attributes: mergedAttributes,
+      content_type: contentType,
+      supersedes: supersedesId ?? live?.supersedes ?? null,
       value: value == null ? '' : String(value),
     };
     const file = existing ? existing.file : this._freshPath(dir, key);
@@ -224,6 +269,7 @@ class LocalStore {
     const now = new Date().toISOString();
     const existing = this._findByKey(scope, entry.key);
     const full = {
+      ...extraFields(entry),
       scope,
       key: entry.key,
       tags: Array.isArray(entry.tags) ? entry.tags : [],
@@ -243,6 +289,12 @@ class LocalStore {
       // re-sight its lessons, so a relocated entry must keep the count it had.
       // An entry that never carried one lands as null and reads back as 0.
       seen_count: entry.seen_count ?? null,
+      // Verbatim too; an entry from before ids existed gets one here, and a
+      // relocated entry that already had one keeps it.
+      id: entry.id || existing?.entry.id || randomUUID(),
+      attributes: entry.attributes ?? {},
+      content_type: entry.content_type ?? null,
+      supersedes: entry.supersedes ?? null,
       value: entry.value == null ? '' : String(entry.value),
     };
     const file = existing ? existing.file : this._freshPath(dir, entry.key);

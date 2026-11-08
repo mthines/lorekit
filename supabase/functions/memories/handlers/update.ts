@@ -10,6 +10,7 @@ import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import { UpdateMemoryBodySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/db/database.types.ts';
+import { RecordFieldError, translateRecordFieldDbError } from '../../_shared/provenance/record-extensions.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -65,7 +66,14 @@ export async function handleUpdate(
     .select(MEMORY_SELECT)
     .maybeSingle();
 
-  if (error) { span.error(`DB: ${error.message}`); throw error; }
+  if (error) {
+    // A new value on an application/json record must still parse; the table
+    // constraint says so, and the caller gets a 400, not a 500.
+    const fieldError = translateRecordFieldDbError(error);
+    if (fieldError instanceof RecordFieldError) return badRequest(fieldError.message, undefined, cors);
+    span.error(`DB: ${error.message}`);
+    throw error;
+  }
   // Audit only when the update actually matched a row — the REST analogue of
   // the MCP tools' `if (archived)` / `if (deleted)` guards. A 404 changed
   // nothing and must not leave an audit trail claiming otherwise.
