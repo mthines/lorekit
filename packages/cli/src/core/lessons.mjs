@@ -2,7 +2,7 @@
 // Framework-agnostic — adapters shape these strings into each tool's contract.
 // Storage is reached through the resolved store (local | remote), never a
 // backend directly, so the same read path serves every mode.
-import { deriveScope } from '../shared/scope.mjs';
+import { deriveScope, withPinnedScopes } from '../shared/scope.mjs';
 // The cross-scope precedence merge comes from the dependency-free
 // `lessons-pure.mjs` — the SAME `resolvePrecedence` `tree` uses, so the hook
 // can't drift from it, and the hot path never pulls in the `lessons-view.mjs`
@@ -220,9 +220,11 @@ export async function fetchLessons(
     loopCap = DEFAULT_SESSION_START_LOOP_CAP,
     branchHint = true,
     maxLessons = DEFAULT_SESSION_START_MAX_LESSONS,
+    // `hooks.sessionStart.scopes`: read on every session, rendered FIRST.
+    pinnedScopes = [],
   } = {},
 ) {
-  const scope = scopeOverride || deriveScope(cwd);
+  const scope = withPinnedScopes(scopeOverride || deriveScope(cwd), pinnedScopes);
   // ONE ceiling, derived once, spent on both the fetch and the diversifier — the
   // two must agree or a raised ceiling asks for lines the read never fetched.
   // `formatLessons` derives the same number from the same config key, so the
@@ -403,9 +405,21 @@ export async function fetchLessons(
   // `applicable` is the honest denominator for the header — how many the reader
   // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
   // "8 of 50" stays true no matter how the render is bounded.
+  // PINNED SCOPES GO FIRST. A scope the user listed in
+  // `hooks.sessionStart.scopes` was asked for by name ("always read my
+  // preferences"), so its lessons are not put up against the rest in the
+  // ranking: they lead the block in their own ranked order, and the ranked,
+  // diversified rest fills what is left. The character budget still applies, so
+  // a big pinned scope can use the whole block; that is the user's call.
+  const pinned = new Set(scope.pinnedScopes || []);
+  const pinnedFirst = capped.filter((l) => pinned.has(l.scope)).slice(0, ceiling);
+  const rest = capped.filter((l) => !pinned.has(l.scope));
   return {
     scope,
-    lessons: diversifyRankedLessons(capped, { ...rankOpts, k: ceiling }),
+    lessons: [
+      ...pinnedFirst,
+      ...diversifyRankedLessons(rest, { ...rankOpts, k: Math.max(0, ceiling - pinnedFirst.length) }),
+    ],
     scopeCounts,
     applicable: ranked.length,
   };

@@ -2020,3 +2020,37 @@ test('lessonId — one spelling of identity, shared by both sides of the shown-s
   assert.equal(lessonId({}), '::');
   assert.equal(lessonId(null), '::');
 });
+
+test('fetchLessons reads pinned scopes and shows their lessons first', async () => {
+  const scope = { branch: 'main', readOrder: ['repo::a/b', 'global'] };
+  const at = '2026-08-01T00:00:00.000Z';
+  const old = '2025-01-01T00:00:00.000Z';
+  const byScope = {
+    'repo::a/b': [
+      { scope: 'repo::a/b', key: 'fresh-repo', value: 'repo notes', seenCount: 9, updatedAt: at },
+      { scope: 'repo::a/b', key: 'shared', value: 'repo copy', updatedAt: at },
+    ],
+    'project::preferences': [
+      { scope: 'project::preferences', key: 'style', value: 'one sentence per line', seenCount: 1, updatedAt: old },
+      { scope: 'project::preferences', key: 'shared', value: 'pinned copy', updatedAt: old },
+    ],
+    global: [{ scope: 'global', key: 'style', value: 'global copy', updatedAt: at }],
+  };
+  const { lessons, scope: read } = await fetchLessons(fakeStore(byScope), process.cwd(), {
+    now: Date.parse(at),
+    scope,
+    pinnedScopes: ['project::preferences'],
+  });
+  assert.deepEqual(read.readOrder, ['repo::a/b', 'project::preferences', 'global'], 'pinned before global');
+  assert.equal(lessons[0].scope, 'project::preferences', 'an old, rarely-seen pinned lesson still leads');
+  assert.equal(lessons[0].value, 'one sentence per line', 'the pinned copy beats the global one');
+  assert.equal(
+    lessons.find((l) => l.key === 'shared').value,
+    'repo copy',
+    'the workspace copy still wins over a pinned one',
+  );
+  assert.ok(lessons.some((l) => l.key === 'fresh-repo'), 'the rest of the read still fills the block');
+
+  const unpinned = await fetchLessons(fakeStore(byScope), process.cwd(), { now: Date.parse(at), scope });
+  assert.ok(!unpinned.lessons.some((l) => l.scope === 'project::preferences'), 'not read unless pinned');
+});

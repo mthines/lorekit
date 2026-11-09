@@ -189,6 +189,7 @@ async function run(args, meter) {
       loopCap: control.hooksSessionStartLoopCap,
       branchHint: control.hooksSessionStartBranchHint !== 'off',
       maxLessons: control.hooksSessionStartMaxLessons,
+      pinnedScopes: control.hooksSessionStartScopes,
     });
     const lessonsBlock = formatLessons(lessons, readScope, {
       instruction: sessionInstruction,

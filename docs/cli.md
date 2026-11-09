@@ -497,6 +497,10 @@ same "not filtered" and both should be dropped.
 
 ### `hook`
 
+On SessionStart the read covers the workspace scopes plus any listed in
+`hooks.sessionStart.scopes` (`withPinnedScopes` slots them before `global`); lessons from those pinned
+scopes skip the ranking and lead the block, and the ranked, diversified rest fills what is left.
+
 The shared hook engine behind the plugins — injects the
 ranked-then-**bucket-capped-then-MMR-diversified** top lessons on SessionStart [`sessionRankOpts`
 seeds a relevance query from the branch name (`branchQueryTerms` distils `scope.branch` after

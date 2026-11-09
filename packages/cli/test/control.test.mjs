@@ -660,3 +660,28 @@ test('control hooks.sessionStart: a declared-but-garbage repo budget still beats
   });
   assert.equal(fellThrough.hooksSessionStartMaxChars, 400);
 });
+
+test('control hooks.sessionStart.scopes: both layers merge, repo first, malformed entries dropped', () => {
+  const at = (cfg) => resolveControl({ ...cfg, connection: NO_CONN }).hooksSessionStartScopes;
+  assert.deepEqual(resolveControl({ connection: NO_CONN }).hooksSessionStartScopes, [], 'none by default');
+  assert.deepEqual(
+    at({
+      repoConfig: { 'hooks.sessionStart.scopes': ['project::x'] },
+      userConfig: { 'hooks.sessionStart.scopes': [' Project::Preferences ', 'project::x'] },
+    }),
+    ['project::x', 'project::preferences'],
+    'union, repo first, normalised, de-duplicated',
+  );
+  assert.deepEqual(
+    at({ userConfig: { 'hooks.sessionStart.scopes': 'project::a, global' } }),
+    ['project::a', 'global'],
+    'a comma-separated string is read as a list',
+  );
+  assert.deepEqual(
+    at({ userConfig: { 'hooks.sessionStart.scopes': ['project:x', 'has space::y', 42, '', 'project::ok'] } }),
+    ['project::ok'],
+    'entries that are not scope-shaped are dropped, not fatal',
+  );
+  const many = Array.from({ length: 15 }, (_, i) => `project::p${i}`);
+  assert.equal(at({ userConfig: { 'hooks.sessionStart.scopes': many } }).length, 10, 'capped');
+});

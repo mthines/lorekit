@@ -61,3 +61,16 @@ export function deriveScope(cwd = process.cwd()) {
     hasRemote: Boolean(ownerRepo),
   };
 }
+
+// Add the configured `hooks.sessionStart.scopes` to a derived scope. They slot
+// in after the workspace scopes and before `global`, so for a key that exists
+// in several places the workspace copy still wins and a pinned copy beats the
+// global one. Pure; an empty list returns the scope unchanged.
+export function withPinnedScopes(scope, pinned = []) {
+  const list = Array.isArray(pinned) ? pinned.filter((s) => typeof s === 'string' && s) : [];
+  if (list.length === 0) return scope;
+  const base = scope.readOrder.filter((s) => s !== 'global');
+  const hasGlobal = scope.readOrder.includes('global') || list.includes('global');
+  const readOrder = [...new Set([...base, ...list.filter((s) => s !== 'global'), ...(hasGlobal ? ['global'] : [])])];
+  return { ...scope, readOrder, pinnedScopes: [...new Set(list)] };
+}
