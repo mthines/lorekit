@@ -15,7 +15,9 @@ import {
   parseRecordFields,
   RecordFieldError,
   translateRecordFieldDbError,
+  VersionConflictError,
 } from '../../_shared/provenance/record-extensions.ts';
+import { versionConflict } from '../../_shared/api/respond.ts';
 import { resolveKindHost } from '../../_shared/schemas/tags.ts';
 import { recordAuditDeferred } from '../../_shared/audit/audit.ts';
 import { recordCitations } from '../../_shared/telemetry/citations.ts';
@@ -147,6 +149,10 @@ export async function handleCreate(
     p_attributes: record.attributes,
     p_content_type: record.contentType,
     p_supersedes: record.supersedes,
+    // Optimistic concurrency (00120). Sent only when given, so an unchecked
+    // write is the exact call it was before; the RPC checks and writes in one
+    // statement.
+    ...(record.expectedVersion !== null ? { p_expected_version: record.expectedVersion } : {}),
     // The calling key's restriction, BOTH axes (00068/00069). The RPC is the
     // last gate the edge cannot bypass — it runs on the service-role client, so
     // the `firstDeniedScope` refusal above is advisory — and the only place that
@@ -162,6 +168,7 @@ export async function handleCreate(
   if (error) {
     const fieldError = translateRecordFieldDbError(error);
     if (fieldError instanceof RecordFieldError) return badRequest(fieldError.message, undefined, cors);
+    if (fieldError instanceof VersionConflictError) return versionConflict(fieldError, cors);
     const mapped = translateDbError(error);
     if (mapped) return mapped.toResponse(cors);
     span.error(`DB: ${error.message}`);
@@ -185,7 +192,7 @@ export async function handleCreate(
     origin_commit: string | null; origin_pr: number | null; kind: string | null;
     host: string | null; seen_count: number | null;
     attributes: Record<string, string | number | boolean> | null; content_type: string | null;
-    supersedes: string | null;
+    supersedes: string | null; version: number | null;
   };
   const row = data as MemoryWriteRow | null;
   if (!row?.id) {
@@ -200,7 +207,7 @@ export async function handleCreate(
     origin_repo: row.origin_repo, origin_branch: row.origin_branch, origin_commit: row.origin_commit,
     origin_pr: row.origin_pr, kind: row.kind, host: row.host, seen_count: row.seen_count ?? undefined,
     attributes: row.attributes ?? undefined, content_type: row.content_type ?? undefined,
-    supersedes: row.supersedes,
+    supersedes: row.supersedes, version: row.version ?? undefined,
   };
 
   // Queue the embedding. Returns synchronously and is a no-op unless embedding

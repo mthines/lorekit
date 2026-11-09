@@ -117,12 +117,13 @@ jq -nc --argjson flaky "$FLAKY" \
 || echo "LoreKit write failed (exit $?) — not failing the build."
 ```
 
-Five things worth copying from this snippet:
+Six things worth copying from this snippet:
 
 - **Keep the TTL short — about a week — and always pass it.** `expires_at` is recomputed as `now() + ttl_days` on *every* write, so a record the job rewrites each run never expires while the job keeps running. The TTL measures how long the job has been *silent*, which is exactly when its contents stopped being true: 7 days for anything running at least daily, 14 for nightly, 30 for weekly. It also caps the damage if someone keys on the run id by mistake — the store drains instead of climbing to the memory cap. Reserve `clear_ttl` for a record whose absence is worse than its staleness. Never omit both, or the write silently inherits whatever default the repo configured for lessons.
 - **A write-only `lk_wo_…` token** in `LOREKIT_TOKEN` is enough for a job that only records. It cannot read anything back, so a leaked CI token cannot exfiltrate the team's lore. Use `lk_ro_…` for a read-only job.
 - **`--content-type application/json` says the value is for a program.** The server rejects a value that does not parse, so a reader that trusts the type never meets a half-written record. `--attributes` carries the run URL as metadata (`ci.run_url`), where `memory.read` returns it without anyone parsing the value.
 - **`v` is a required version stamp.** A reader that sees an unrecognised version falls back to its first-run path instead of mis-parsing.
+- **Jobs that can overlap should pass `--expected-version`.** `show --json` returns the record's `version` (`.remote.record.version`). Write back with `--expected-version <that number>`, or `0` when `show` found nothing, and a concurrent run's write is refused with exit 1 (`version_conflict`) instead of overwriting the other run's result. Re-read, merge, retry. This `version` is LoreKit's count of content changes to the record, separate from the `v` schema stamp inside the value.
 - **Never on the critical path.** A LoreKit outage falls back to the first-run path and logs it; it never turns a green build red.
 
 Never build the payload from an environment dump or a raw error body — a CI environment is full of tokens. Assemble it from an explicit list of fields. The value cap is 64 KiB, so reports, logs, and traces belong in artifacts, not here.

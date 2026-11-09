@@ -10,6 +10,11 @@ import {
   splitCitedIds,
   translateRecordFieldDbError,
   compactRecordFields,
+  parseExpectedVersion,
+  VersionConflictError,
+  groupSupersededBy,
+  withSupersededBy,
+  RECORD_FIELD_COLUMNS,
 } from './record-extensions.js';
 
 const ID = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6b';
@@ -77,7 +82,7 @@ describe('parseSupersedes / isMemoryId', () => {
 
 describe('parseRecordFields', () => {
   it('returns all nulls when nothing is supplied, so the RPC keeps what is stored', () => {
-    expect(parseRecordFields({}, 'body')).toEqual({ attributes: null, contentType: null, supersedes: null });
+    expect(parseRecordFields({}, 'body')).toEqual({ attributes: null, contentType: null, supersedes: null, expectedVersion: null });
   });
 
   it('requires a JSON body to parse when the content type says JSON', () => {
@@ -132,5 +137,86 @@ describe('compactRecordFields', () => {
   it('keeps fields that say something', () => {
     const row = { id: ID, attributes: { 'vcs.pr': 4 }, content_type: 'application/json', supersedes: ID };
     expect(compactRecordFields(row)).toEqual(row);
+  });
+});
+
+describe('parseExpectedVersion', () => {
+  it('returns null when omitted, so a write is unchecked as before', () => {
+    expect(parseExpectedVersion(undefined)).toBeNull();
+    expect(parseExpectedVersion(null)).toBeNull();
+    expect(parseRecordFields({}, 'v').expectedVersion).toBeNull();
+  });
+
+  it('accepts 0 ("must not exist") and any positive integer', () => {
+    expect(parseExpectedVersion(0)).toBe(0);
+    expect(parseExpectedVersion(7)).toBe(7);
+    expect(parseRecordFields({ expected_version: 3 }, 'v').expectedVersion).toBe(3);
+  });
+
+  it.each([
+    ['a negative number', -1],
+    ['a fraction', 1.5],
+    ['a numeric string', '2'],
+    ['a boolean', true],
+    ['NaN', Number.NaN],
+    ['past int4', 2147483648],
+  ])('rejects %s', (_label, input) => {
+    expect(() => parseExpectedVersion(input)).toThrow(RecordFieldError);
+  });
+});
+
+describe('version conflicts', () => {
+  it('translates memory_write LK003 into a VersionConflictError carrying both versions', () => {
+    const err = translateRecordFieldDbError({
+      code: 'LK003',
+      message: 'version_conflict: expected_version=2 current_version=5',
+    });
+    expect(err).toBeInstanceOf(VersionConflictError);
+    const conflict = err as VersionConflictError;
+    expect(conflict.code).toBe('version_conflict');
+    expect(conflict.expectedVersion).toBe(2);
+    expect(conflict.currentVersion).toBe(5);
+    expect(conflict.message).toMatch(/^version_conflict: /);
+    expect(conflict.message).toContain('stored version 5');
+  });
+
+  it('says so when the record does not exist', () => {
+    const err = translateRecordFieldDbError({ message: 'version_conflict: expected_version=3 current_version=0' });
+    expect((err as Error).message).toContain('does not exist');
+  });
+
+  it('is not a RecordFieldError: the input was well-formed', () => {
+    expect(new VersionConflictError(1, 2)).not.toBeInstanceOf(RecordFieldError);
+  });
+
+  it('reads version alongside the record extensions', () => {
+    expect(RECORD_FIELD_COLUMNS.split(',')).toContain('version');
+    expect(compactRecordFields({ id: ID, version: 1, attributes: {}, content_type: 'text/markdown', supersedes: null }))
+      .toEqual({ id: ID, version: 1 });
+  });
+});
+
+describe('superseded_by', () => {
+  const A = '00000000-0000-4000-8000-00000000000a';
+  const B = '00000000-0000-4000-8000-00000000000b';
+  const C = '00000000-0000-4000-8000-00000000000c';
+
+  it('groups successors by the id they supersede, keeping their order', () => {
+    const links = groupSupersededBy([
+      { id: B, supersedes: A },
+      { id: C, supersedes: A },
+      { id: C, supersedes: A },
+      { id: A, supersedes: null },
+      { supersedes: A },
+    ]);
+    expect(links.get(A)).toEqual([B, C]);
+    expect(links.size).toBe(1);
+  });
+
+  it('attaches superseded_by only when something supersedes the record', () => {
+    const links = groupSupersededBy([{ id: B, supersedes: A }]);
+    expect(withSupersededBy({ id: A, value: 'v' }, links)).toEqual({ id: A, value: 'v', superseded_by: [B] });
+    expect(withSupersededBy({ id: B, value: 'v' }, links)).toEqual({ id: B, value: 'v' });
+    expect(withSupersededBy({ value: 'v' }, links)).toEqual({ value: 'v' });
   });
 });

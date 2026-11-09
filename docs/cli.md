@@ -435,6 +435,29 @@ kept on every rewrite instead of being dropped. `migrate` to remote carries `att
 `content_type`; it does not carry `supersedes` (a local id means nothing to the hosted store) or the
 local `id` (the hosted store mints its own).
 
+**Versions and `--expected-version` (migration 00120).** Every record has a `version`: `1` when it
+is created, one higher on each content change (value, content type, merged attributes, tags, or a
+new `supersedes` link), unchanged by an identical rewrite, a TTL change, provenance, archive or
+restore. A write to an archived key starts again at `1`. The local store keeps it in the
+frontmatter (appended to `FIELDS`) and applies the same rule as the hosted trigger; a file written
+before the field existed reads as version `1`. `write` reports the new version (`version` in
+`--json`), and `show` and `list --json` include it.
+
+- `--expected-version <n>` — write only if the memory is still at version `n`; `0` means it must
+  not exist yet (an archived or expired record counts as absent, as it does for reads; an expired
+  record rewritten this way keeps counting from its old version, and with no `--ttl-days` /
+  `--clear-ttl` and no configured default its past expiry is cleared so it is live again). On a
+  mismatch nothing is written and the
+  command exits `1` naming the stored version:
+  `version conflict — global::k is at version 4, not 3. Nothing was written.` Works against both
+  stores; remotely the check is atomic in the `memory_write` RPC (`409 version_conflict`).
+
+`show` also prints `superseded by <id>, …` when other live records name this one in their
+`supersedes` (newest first; `superseded_by` in `--json`). Locally that is computed across both store
+tiers on `show`/`read`; `list` and `search` do not compute it offline, because it would cost a walk
+of the whole store on the hook hot path. A local relocation (`migrate --to project`) keeps each
+record's `version`; `migrate` to remote does not send it — the hosted store counts its own.
+
 ### `archive`/`delete`/`restore`
 
 (aliases: `rm` → `delete`) (the removal lifecycle, the counterpart to `write` — `archive

@@ -427,7 +427,23 @@ Two shapes, decided by whether the tool ran.
 That is the MCP spec's shape, so the model can see the failure and self-correct
 rather than having the client library swallow it. You get it for anything you can
 fix: the memory cap, a malformed scope, an invalid `ttl_*` or `created_at`, an
-unresolvable org slug, an insufficient org role.
+unresolvable org slug, an insufficient org role, and a stale `expected_version`.
+
+**A version conflict** is how a conditional write fails. Every memory carries a
+`version` (1 on create, +1 each time its value, tags, `attributes`,
+`content_type` or `supersedes` changes; a TTL change or an identical rewrite
+leaves it alone). `memory.write` returns it, and `memory.read` / `.list` /
+`.search` return it on every entry. Send it back as `expected_version` and the
+write applies only if nobody changed the memory in between (`0` = it must not
+exist yet). Otherwise nothing is written and the text starts with
+`version_conflict:` and names the stored version — re-read, reconcile, and retry
+with that number. Over REST the same refusal is a `409` with
+`code: "version_conflict"` and `current_version` in the body.
+
+**A corrected memory says so.** A read returns `superseded_by` — the ids of the
+live memories you can see whose `supersedes` names this one — when there is at
+least one. Superseded memories still appear in lists and searches; they are
+marked, not hidden.
 
 **Writing a client? Check `result.isError`.** The HTTP status is `200` and there
 is no `error` member, so a client that only tests for `response.error` reads

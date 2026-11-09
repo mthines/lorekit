@@ -58,6 +58,9 @@ values
   -- §119's own account, plus the foreign tenant its probe assertion needs.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000ac', 'authenticated', 'authenticated', 'lk-mig-ac@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000ad', 'authenticated', 'authenticated', 'lk-mig-ad@test.local', now(), now()),
+  -- §120's own account, plus the foreign tenant its visibility assertion needs.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000ae', 'authenticated', 'authenticated', 'lk-mig-ae@test.local', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000af', 'authenticated', 'authenticated', 'lk-mig-af@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -3523,8 +3526,9 @@ do $$
 declare
   -- 00069 appended the key restriction (p_key_scopes, p_key_org_access,
   -- p_key_org_ids → 20 args); 00119 inserted p_attributes, p_content_type and
-  -- p_supersedes after p_host (23 args).
-  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text, jsonb, text, uuid, text[], text, uuid[])';
+  -- p_supersedes after p_host (23 args); 00120 appended p_expected_version
+  -- (24 args).
+  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text, jsonb, text, uuid, text[], text, uuid[], integer)';
 begin
   assert has_function_privilege('anon', v_sig, 'EXECUTE'),
     'origin: anon must have EXECUTE on the widened memory_write';
@@ -12027,6 +12031,273 @@ begin
   assert (select count(*) from memories where key = '119-svc' and user_id = v_other) = 1,
     '119 AC-4g: a service-role caller must still be able to name the user';
   perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §120 — 00120: `version` on every memory, and `p_expected_version`
+--
+-- version starts at 1 (existing rows included), moves +1 on a CONTENT change
+-- only, cannot be set by a caller, and memory_write refuses a stale
+-- p_expected_version with LK003 version_conflict without writing anything.
+-- `superseded_by` is computed by the edge from `supersedes`; the visibility
+-- half of it is the RLS read asserted at the end.
+-- ═══════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  v_me     constant uuid := '00000000-0000-0000-0000-0000000000ae';
+  v_other  constant uuid := '00000000-0000-0000-0000-0000000000af';
+  v_id     uuid;
+  v_old    uuid;
+  v_v      integer;
+  v_val    text;
+  v_err    text;
+  v_keys   text[];
+begin
+  -- ── backfill: the column is NOT NULL DEFAULT 1, so pre-00120 rows read 1 ─
+  assert (select is_nullable = 'NO' and column_default = '1'
+            from information_schema.columns
+           where table_name = 'memories' and column_name = 'version'),
+    '120 AC-1a: memories.version must be NOT NULL DEFAULT 1';
+  -- §1's rows were inserted before any section edited them; a row whose
+  -- content no section changed reads exactly 1, and no row reads below it.
+  assert (select version from memories where key = 'rls-a') = 1,
+    '120 AC-1b: an untouched row must read version 1';
+  assert not exists (select 1 from memories where version < 1),
+    '120 AC-1b: no row may read below version 1';
+  -- added NOT VALID by 00120, validated by 00121: it must end VALID
+  assert (select convalidated from pg_constraint
+           where conname = 'memories_version_positive' and conrelid = 'memories'::regclass),
+    '120 AC-1r: memories_version_positive must be validated (00121) after its NOT VALID add (00120)';
+
+  -- ── a write starts at 1 and returns it ───────────────────────────────────
+  select id, version into v_id, v_v
+    from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-a', p_value => 'one',
+                      p_tags => array['t1']);
+  assert v_v = 1, format('120 AC-1c: a new memory must start at version 1, got %s', v_v);
+
+  -- ── an identical rewrite, a TTL change and a re-sighting do not bump ────
+  select version into v_v
+    from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-a', p_value => 'one',
+                      p_tags => array['t1'], p_ttl_seconds => 3600);
+  assert v_v = 1, format('120 AC-1d: identical content with a new TTL must stay at 1, got %s', v_v);
+  assert (select seen_count from memories where id = v_id) = 2,
+    '120 AC-1d: the rewrite must still count as a sighting';
+
+  -- ── a value change bumps ─────────────────────────────────────────────────
+  select version into v_v
+    from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-a', p_value => 'two',
+                      p_tags => array['t1']);
+  assert v_v = 2, format('120 AC-1e: a value change must bump to 2, got %s', v_v);
+
+  -- each content field bumps on its own
+  select version into v_v from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-a',
+    p_value => 'two', p_tags => array['t1', 't2']);
+  assert v_v = 3, format('120 AC-1f: a tags change must bump, got %s', v_v);
+  select version into v_v from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-a',
+    p_value => 'two', p_tags => array['t1', 't2'], p_attributes => '{"ci.run": 1}'::jsonb);
+  assert v_v = 4, format('120 AC-1g: an attributes change must bump, got %s', v_v);
+  select version into v_v from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-a',
+    p_value => 'two', p_tags => array['t1', 't2'], p_attributes => '{"ci.run": 1}'::jsonb);
+  assert v_v = 4, format('120 AC-1h: re-sending the same attributes must not bump, got %s', v_v);
+  select version into v_v from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-a',
+    p_value => '{"a": 1}', p_tags => array['t1', 't2'], p_content_type => 'application/json');
+  assert v_v = 5, format('120 AC-1i: a value + content_type change must bump once, got %s', v_v);
+
+  -- ── counters, embeddings, archive and restore do not bump ───────────────
+  update memories set read_count = read_count + 1, last_read_at = now(),
+                      opened_count = opened_count + 1, cited_count = cited_count + 1
+   where id = v_id;
+  update memories set expires_at = now() + interval '1 day' where id = v_id;
+  update memories set archived_at = now() where id = v_id;
+  update memories set archived_at = null where id = v_id;
+  assert (select version from memories where id = v_id) = 5,
+    format('120 AC-1j: counters, TTL, archive and restore must not bump, got %s',
+           (select version from memories where id = v_id));
+
+  -- ── a caller cannot set version ─────────────────────────────────────────
+  update memories set version = 99 where id = v_id;
+  assert (select version from memories where id = v_id) = 5,
+    '120 AC-1k: a direct UPDATE of version alone must be overridden';
+  update memories set version = 99, value = '{"a": 2}' where id = v_id;
+  assert (select version from memories where id = v_id) = 6,
+    '120 AC-1l: a direct UPDATE that changes content gets old + 1, never the stated version';
+  insert into memories (user_id, scope, key, value, version)
+    values (v_me, 'global', '120-direct', 'v', 42) returning version into v_v;
+  assert v_v = 1, format('120 AC-1m: a direct INSERT must start at 1, got %s', v_v);
+  begin
+    update memories set version = 0 where id = v_id;
+    v_err := null;
+  exception when others then v_err := sqlerrm;
+  end;
+  assert (select version from memories where id = v_id) = 6 and v_err is null,
+    '120 AC-1n: a direct UPDATE to 0 is overridden, not an error';
+
+  -- ── supersedes: setting bumps; the target's deletion clears without a bump
+  select id into v_old
+    from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-old', p_value => 'v');
+  select version into v_v from memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-a',
+    p_value => '{"a": 2}', p_tags => array['t1', 't2'], p_supersedes => v_old);
+  assert v_v = 7, format('120 AC-1o: setting supersedes must bump, got %s', v_v);
+  delete from memories where id = v_old;
+  assert (select supersedes is null and version = 7 from memories where id = v_id),
+    '120 AC-1p: a link cleared by its target''s deletion must not bump';
+
+  -- ── p_expected_version ──────────────────────────────────────────────────
+  -- match → written, bumped
+  select version, value into v_v, v_val from memory_write(p_user_id => v_me, p_scope => 'global',
+    p_key => '120-a', p_value => '{"a": 3}', p_tags => array['t1', 't2'], p_expected_version => 7);
+  assert v_v = 8 and v_val = '{"a": 3}', format('120 AC-2a: a matching expected_version must write, got %s', v_v);
+
+  -- mismatch → LK003 version_conflict naming the stored version, nothing written
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-a',
+      p_value => '{"a": 4}', p_expected_version => 7);
+    v_err := null;
+  exception when others then v_err := sqlstate || ' ' || sqlerrm;
+  end;
+  assert v_err = 'LK003 version_conflict: expected_version=7 current_version=8',
+    format('120 AC-2b: a stale expected_version must raise version_conflict, got %L', v_err);
+  assert (select value = '{"a": 3}' and version = 8 and seen_count = 9 from memories where id = v_id),
+    '120 AC-2c: a refused write must change nothing (value, version, seen_count)';
+
+  -- 0 on an existing key → conflict
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-a',
+      p_value => 'x', p_expected_version => 0);
+    v_err := null;
+  exception when others then v_err := sqlstate || ' ' || sqlerrm;
+  end;
+  assert v_err = 'LK003 version_conflict: expected_version=0 current_version=8',
+    format('120 AC-2d: expected 0 on an existing key must conflict, got %L', v_err);
+
+  -- 0 on an absent key → created
+  select version into v_v from memory_write(p_user_id => v_me, p_scope => 'global',
+    p_key => '120-new', p_value => 'v', p_expected_version => 0);
+  assert v_v = 1, format('120 AC-2e: expected 0 on an absent key must create it, got %s', v_v);
+
+  -- N > 0 on an absent key → conflict at 0, no row
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-absent',
+      p_value => 'v', p_expected_version => 3);
+    v_err := null;
+  exception when others then v_err := sqlstate || ' ' || sqlerrm;
+  end;
+  assert v_err = 'LK003 version_conflict: expected_version=3 current_version=0',
+    format('120 AC-2f: expected 3 on an absent key must conflict at 0, got %L', v_err);
+  assert not exists (select 1 from memories where key = '120-absent'),
+    '120 AC-2g: a refused create must leave no row';
+
+  -- an archived row is not the live record: expected 0 revives the key as new
+  update memories set archived_at = now() where key = '120-new' and user_id = v_me;
+  select version into v_v from memory_write(p_user_id => v_me, p_scope => 'global',
+    p_key => '120-new', p_value => 'again', p_expected_version => 0);
+  assert v_v = 1, format('120 AC-2h: an archived key counts as absent, got %s', v_v);
+
+  -- the gate is per owner: another user's row of the same key is not "the" row
+  perform memory_write(p_user_id => v_other, p_scope => 'global', p_key => '120-shared', p_value => 'theirs');
+  select version into v_v from memory_write(p_user_id => v_me, p_scope => 'global',
+    p_key => '120-shared', p_value => 'mine', p_expected_version => 0);
+  assert v_v = 1, format('120 AC-2i: another owner''s row must not count against expected 0, got %s', v_v);
+
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-neg',
+      p_value => 'v', p_expected_version => -1);
+    v_err := null;
+  exception when others then v_err := sqlstate;
+  end;
+  assert v_err = '22023', format('120 AC-2j: a negative expected_version must be rejected, got %L', v_err);
+
+  -- an EXPIRED row is not read, so it counts as absent (version 0) — the same
+  -- liveness the reads use. The write updates that row in place and its
+  -- version continues counting (not a restart at 1).
+  perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp', p_value => 'one');
+  perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp', p_value => 'two');
+  update memories set expires_at = now() - interval '1 minute' where key = '120-exp' and user_id = v_me;
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp',
+      p_value => 'x', p_expected_version => 2);
+    v_err := null;
+  exception when others then v_err := sqlstate || ' ' || sqlerrm;
+  end;
+  assert v_err = 'LK003 version_conflict: expected_version=2 current_version=0',
+    format('120 AC-2k: an expired row must read as version 0 to the gate, got %L', v_err);
+  select version, value into v_v, v_val from memory_write(p_user_id => v_me, p_scope => 'global',
+    p_key => '120-exp', p_value => 'three', p_expected_version => 0, p_clear_ttl => true);
+  assert v_v = 3 and v_val = 'three',
+    format('120 AC-2l: expected 0 on an expired key must write and continue the version, got %s %L', v_v, v_val);
+  assert (select count(*) = 1 from memories where key = '120-exp' and user_id = v_me),
+    '120 AC-2m: the expired row must be updated in place, not duplicated';
+  -- revived (TTL cleared), it is live again: 0 now conflicts at its version
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp',
+      p_value => 'y', p_expected_version => 0);
+    v_err := null;
+  exception when others then v_err := sqlstate || ' ' || sqlerrm;
+  end;
+  assert v_err = 'LK003 version_conflict: expected_version=0 current_version=3',
+    format('120 AC-2n: a live row must conflict against expected 0, got %L', v_err);
+
+  -- an expired row revived by an expected_version write that names NO TTL
+  -- must come back live: keeping its past expires_at would leave it hidden
+  -- and purgeable. Its TTL is cleared, as a fresh insert without one gets.
+  perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp2', p_value => 'one');
+  update memories set expires_at = now() - interval '1 minute' where key = '120-exp2' and user_id = v_me;
+  select version, value into v_v, v_val from memory_write(p_user_id => v_me, p_scope => 'global',
+    p_key => '120-exp2', p_value => 'two', p_expected_version => 0);
+  assert v_v = 2 and v_val = 'two',
+    format('120 AC-2o: expected 0 on an expired key without a TTL must write, got %s %L', v_v, v_val);
+  assert (select expires_at is null from memories where key = '120-exp2' and user_id = v_me),
+    '120 AC-2o: a revived expired row with no TTL named must have its expires_at cleared';
+  -- an explicit TTL on the revive is honoured, not cleared
+  update memories set expires_at = now() - interval '1 minute' where key = '120-exp2' and user_id = v_me;
+  perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp2',
+    p_value => 'three', p_expected_version => 0, p_ttl_seconds => 3600);
+  assert (select expires_at = now() + interval '1 hour' from memories where key = '120-exp2' and user_id = v_me),
+    '120 AC-2p: a revive that names a TTL must keep that TTL';
+  -- scope of the fix: a write with no expected_version keeps the past TTL as before
+  update memories set expires_at = now() - interval '1 minute' where key = '120-exp2' and user_id = v_me;
+  perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp2', p_value => 'four');
+  assert (select expires_at < now() from memories where key = '120-exp2' and user_id = v_me),
+    '120 AC-2q: a plain write without expected_version must keep expires_at unchanged';
+
+  -- ── lorekit_memory_list returns version ─────────────────────────────────
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  select l.version into v_v from lorekit_memory_list(p_user_id => v_me, p_key => '120-a') l;
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+  assert v_v = 8, format('120 AC-1q: lorekit_memory_list must return version, got %s', v_v);
+
+  -- ── superseded_by visibility: successors are read under the caller's RLS ─
+  -- The edge computes `superseded_by` as "live rows whose supersedes is this
+  -- id", read under the same tenant filter as the read itself. A successor in
+  -- another tenant (only the service tier can create one), an archived one and
+  -- an expired one must all stay invisible.
+  insert into memories (user_id, scope, key, value) values (v_me, 'global', '120-target', 'v')
+    returning id into v_old;
+  insert into memories (user_id, scope, key, value, supersedes) values
+    (v_me,    'global', '120-succ-mine',     'v', v_old),
+    (v_other, 'global', '120-succ-foreign',  'v', v_old);
+  insert into memories (user_id, scope, key, value, supersedes, archived_at) values
+    (v_me, 'global', '120-succ-archived', 'v', v_old, now());
+  insert into memories (user_id, scope, key, value, supersedes, expires_at) values
+    (v_me, 'global', '120-succ-expired', 'v', v_old, now() - interval '1 minute');
+  set local role authenticated;
+  perform set_config('request.jwt.claims', format('{"sub":"%s","role":"authenticated"}', v_me), true);
+  select array_agg(m.key order by m.key) into v_keys
+    from memories m
+   where m.supersedes = v_old
+     and m.archived_at is null
+     and (m.expires_at is null or m.expires_at > now());
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+  assert v_keys = array['120-succ-mine'],
+    format('120 AC-3a: only the caller''s own live successor may be visible, got %s', v_keys);
+  -- and the foreign successor really exists, so the assertion above can fail
+  assert exists (select 1 from memories where key = '120-succ-foreign' and supersedes = v_old),
+    '120 AC-3b: the foreign successor must exist for AC-3a to mean anything';
 end;
 $$;
 

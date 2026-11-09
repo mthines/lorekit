@@ -5,12 +5,14 @@ import { createTracedClient } from '../../_shared/telemetry/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/db/database.types.ts';
-import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
+import { getMemberOrgIds, applyRestTenantScope, restSupersededBy } from '../../_shared/api/tenant.ts';
+import { withSupersededBy } from '../../_shared/provenance/record-extensions.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 import { recordMemoryReads } from '../../_shared/telemetry/memory-reads.ts';
 import { CLIENT_HEADER } from '../../_shared/api/router.ts';
 import { parseUsageClient } from '../../_shared/telemetry/usage-stats.ts';
+import { NOT_EXPIRED } from '../../_shared/memory/live.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -29,12 +31,12 @@ export async function handleGet(
     .select(MEMORY_SELECT)
     .eq('id', v.data)
     .is('archived_at', null)
-    .or('expires_at.is.null,expires_at.gt.now()');
+    .or(NOT_EXPIRED);
 
   // api_key auth uses service-role client (bypasses RLS) — apply tenant filter.
   // JWT auth uses RLS-scoped client — RLS handles visibility automatically.
-  if (auth.type === 'api_key' && auth.userId) {
-    const orgIds = await getMemberOrgIds(db, auth.userId, span);
+  const orgIds = auth.type === 'api_key' && auth.userId ? await getMemberOrgIds(db, auth.userId, span) : undefined;
+  if (auth.type === 'api_key' && auth.userId && orgIds) {
     q = applyRestTenantScope(q, auth.userId, orgIds, keyRestriction(auth));
   }
 
@@ -42,7 +44,9 @@ export async function handleGet(
   if (error) { span.error(`DB: ${error.message}`); throw error; }
   if (!data) return notFound('Memory', cors);
   // One record read — surfaced for the router's usage event (RESULT_COUNT_HEADER).
-  const res = ok(shapeMemoryRow(data as Record<string, unknown>), cors);
+  // `superseded_by` (00120), under the same visibility as this read.
+  const links = await restSupersededBy(db, auth, span, [(data as { id: string }).id], orgIds);
+  const res = ok(withSupersededBy(shapeMemoryRow(data as Record<string, unknown>), links), cors);
   res.headers.set('X-LoreKit-Result-Count', '1');
   // GET /:id is the REST equivalent of memory.read — one exact scope+key —
   // so it is a TARGETED read for the per-memory counter (migration 00077).

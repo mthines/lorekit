@@ -36,8 +36,10 @@ import {
   parseRecordFields,
   translateRecordFieldDbError,
   compactRecordFields,
+  withSupersededBy,
   RECORD_FIELD_COLUMNS,
 } from '../_shared/provenance/record-extensions.ts';
+import { fetchSupersededBy } from '../_shared/memory/superseded-by.ts';
 import { recordAuditDeferred } from '../_shared/audit/audit.ts';
 import { applyTenantScope, reachesPersonal, type KeyRestriction } from '../_shared/auth/tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
@@ -73,6 +75,7 @@ interface ListRow {
   value: string;
   tags: string[];
   updated_at: string | null;
+  version?: number;
 }
 
 /**
@@ -166,7 +169,7 @@ export async function toolWrite(
   // argument rather than a parameter threaded through all twelve.
   correlationId?: string | null,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host, cited, attributes, content_type, supersedes } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host, cited, attributes, content_type, supersedes, expected_version } = params;
   if (!rawScope || !key || !value) throw new UserInputError('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new UserInputError(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
@@ -179,8 +182,9 @@ export async function toolWrite(
   // per field, so omitting one never erases what an earlier write recorded.
   const origin = parseOrigin({ origin_repo, origin_branch, origin_commit, origin_pr });
   // Record extensions (00119): open attributes, the value's content type, and
-  // the id this record supersedes. Null means "keep what is stored".
-  const record = parseRecordFields({ attributes, content_type, supersedes }, value);
+  // the id this record supersedes. Null means "keep what is stored". And the
+  // optimistic-concurrency check (00120): null means "unchecked".
+  const record = parseRecordFields({ attributes, content_type, supersedes, expected_version }, value);
   // Taxonomy: explicit kind/host win; otherwise recover them from the loop tag.
   // The shared resolver is the one place the closed-vocabulary check and the
   // host-length clamp live, so storage and usage tracking classify identically.
@@ -206,6 +210,7 @@ export async function toolWrite(
     ...(record.attributes ? { 'lorekit.attributes.count': Object.keys(record.attributes).length } : {}),
     ...(record.contentType ? { 'lorekit.content_type': record.contentType } : {}),
     ...(record.supersedes ? { 'lorekit.supersedes': true } : {}),
+    ...(record.expectedVersion !== null ? { 'lorekit.expected_version': record.expectedVersion } : {}),
   });
 
   // 00003 replaced the plain unique constraint with PARTIAL indexes
@@ -235,6 +240,9 @@ export async function toolWrite(
       p_attributes: record.attributes,
       p_content_type: record.contentType,
       p_supersedes: record.supersedes,
+      // Sent only when given, so an unchecked write is the exact call it was
+      // before 00120. The RPC holds the check and the write in one statement.
+      ...(record.expectedVersion !== null ? { p_expected_version: record.expectedVersion } : {}),
       // The calling key's restriction, BOTH axes (00068/00069). The RPC is the
       // LAST gate on the write path — the edge runs on the service-role client,
       // so the dispatcher's check above it is advisory — and it is also the only
@@ -255,6 +263,7 @@ export async function toolWrite(
     inserted?: boolean;
     org_routed?: boolean;
     binding_org_slug?: string | null;
+    version?: number;
   };
 
   // Emit the write outcome as a telemetry attribute (insert vs update) so
@@ -293,10 +302,13 @@ export async function toolWrite(
     return {
       id: row.id,
       created_at: row.created_at,
+      version: row.version,
       notice: `Saved to your personal lore. The scope "${scope}" is shared with the "${row.binding_org_slug}" organization, but you're not a write-member — ask an admin to add you to share it with the team.`,
     };
   }
-  const result: Record<string, unknown> = { id: row.id, created_at: row.created_at };
+  // `version` (00120) is what the caller passes back as `expected_version` on
+  // its next write, so it is returned on every write, not only when it moved.
+  const result: Record<string, unknown> = { id: row.id, created_at: row.created_at, version: row.version };
   if (ttlSeconds !== null || clear_ttl) result.expires_at = (row as { id: string; created_at: string; expires_at?: string | null }).expires_at ?? null;
   return result;
 }
@@ -365,7 +377,8 @@ export async function toolRead(
   // A named scope still narrows in SQL — same single-row read as before, no
   // extra rows fetched to be discarded client-side.
   if (scope) query = query.eq('scope', scope);
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
+  const orgIds = userId ? await memberOrgIds(db, userId) : [];
+  if (userId) query = applyTenantScope(query, userId, orgIds, keyScoping);
   // The cap is a safety valve on a pathological key, not a correctness
   // boundary: `scope`+`key` is unique, so the scoped path can only ever match
   // one row, and an unscoped one matches once per scope holding that key.
@@ -385,7 +398,7 @@ export async function toolRead(
     .order('updated_at', { ascending: false })
     .limit(UNSCOPED_READ_CANDIDATE_LIMIT);
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as { id: string; scope: string; value: string; updated_at: string; attributes?: unknown; content_type?: unknown; supersedes?: unknown }[];
+  const rows = (data ?? []) as { id: string; scope: string; value: string; updated_at: string; attributes?: unknown; content_type?: unknown; supersedes?: unknown; version?: number }[];
   // Stamped BEFORE the miss return, not after: a miss is exactly the population
   // this measure exists to size — how often an unscoped read fans out and still
   // finds nothing. Stamping it after the return also made this surface disagree
@@ -407,7 +420,11 @@ export async function toolRead(
   // discarded were never shown to the caller, and counting them would inflate
   // the `opened_count / read_count` ratio `/insights` is built on.
   recordMemoryReads(db, [winner.id], 'targeted', 'mcp');
-  const rest = compactRecordFields(winner);
+  // `superseded_by` (00120): the records that say they replace this one, read
+  // under the SAME tenant filter as the read above.
+  const links = await fetchSupersededBy(tracedDb, [winner.id], (q) =>
+    userId ? applyTenantScope(q, userId, orgIds, keyScoping) : q);
+  const rest = withSupersededBy(compactRecordFields(winner), links);
   // `other_scopes` appears ONLY when the key was genuinely ambiguous — an
   // always-present empty array would be noise on every single-lesson read.
   const others = shadowedScopes(rows, winner);
@@ -472,7 +489,7 @@ async function toolReadRefs(
     if (userId) query = applyTenantScope(query, userId, orgIds, keyScoping);
     const { data, error } = await query;
     if (error) throw new Error(error.message);
-    return (data ?? []) as { id: string; scope: string; key: string; value: string; updated_at: string; attributes?: unknown; content_type?: unknown; supersedes?: unknown }[];
+    return (data ?? []) as { id: string; scope: string; key: string; value: string; updated_at: string; attributes?: unknown; content_type?: unknown; supersedes?: unknown; version?: number }[];
   };
 
   const rows = (
@@ -486,7 +503,10 @@ async function toolReadRefs(
   ).flat();
 
   if (rows.length > 0) recordMemoryReads(db, rows.map((r) => r.id), 'targeted', 'mcp');
-  const entries = rows.map(compactRecordFields);
+  // One `superseded_by` query for the whole batch, never one per ref.
+  const links = await fetchSupersededBy(tracedDb, rows.map((r) => r.id), (q) =>
+    userId ? applyTenantScope(q, userId, orgIds, keyScoping) : q);
+  const entries = rows.map((r) => withSupersededBy(compactRecordFields(r), links));
   const missing = missingRefs(parsed, rows);
   // `result.count` is what every other tool reports, so a batch read that omits
   // it is absent from any panel built over that attribute rather than reading
@@ -567,6 +587,12 @@ export async function toolList(
   span.setAttributes({ ...(scope ? { 'lorekit.scope': scope } : {}), 'lorekit.list.unscoped': scope === null });
 
   const tracedDb = createTracedClient(db, span);
+  const orgIds = userId ? await memberOrgIds(db, userId) : [];
+  // `superseded_by` (00120) for a page: ONE query over the page's ids, under
+  // the same tenant filter as the page itself. List filtering is unchanged —
+  // a superseded record still appears, it is only marked.
+  const supersededBy = (ids: (string | undefined)[]) =>
+    fetchSupersededBy(tracedDb, ids, (q) => (userId ? applyTenantScope(q, userId, orgIds, keyScoping) : q));
 
   if (ranked) {
     // ── Ranked path (D1/D2/D4/D8) ─────────────────────────────────────────
@@ -581,14 +607,14 @@ export async function toolList(
       // lesson came from where — and a field that appears only on the unscoped
       // shape would be one more conditional response for every consumer to
       // dispatch on, which `memory.read`'s `refs` already cost us once.
-      .select('id,scope,key,value,tags,updated_at,seen_count,origin_pr')
+      .select('id,scope,key,value,tags,updated_at,seen_count,origin_pr,version')
       .is('archived_at', null)
       .or('expires_at.is.null,expires_at.gt.now()')
       .order('updated_at', { ascending: false })
       .order('id', { ascending: false })
       .limit(CANDIDATE_LIMIT);
     if (scope) rankQuery = rankQuery.eq('scope', scope);
-    if (userId) rankQuery = applyTenantScope(rankQuery, userId, await memberOrgIds(db, userId), keyScoping);
+    if (userId) rankQuery = applyTenantScope(rankQuery, userId, orgIds, keyScoping);
     if (tags.length) rankQuery = rankQuery.overlaps('tags', pgArrayLiteral(tags));
     // Taxonomy filters are applied BEFORE ranking, not after: the candidate
     // window is bounded at CANDIDATE_LIMIT, so filtering afterwards would rank
@@ -598,7 +624,7 @@ export async function toolList(
     const { data: rankData, error: rankError } = await rankQuery;
     if (rankError) throw new Error(rankError.message);
 
-    const candidates: (RankableLesson & { id: string; key: string; value: string; tags: string[]; updated_at: string | null })[] = (rankData ?? []).map(
+    const candidates: (RankableLesson & { id: string; key: string; value: string; tags: string[]; updated_at: string | null; version?: number })[] = (rankData ?? []).map(
       // deno-lint-ignore no-explicit-any
       (r: any) => ({
         id: r.id,
@@ -606,6 +632,7 @@ export async function toolList(
         value: r.value,
         tags: r.tags,
         updated_at: r.updated_at,
+        version: r.version,
         seen_count: r.seen_count,
         outcome: outcomeFromTags(r.tags, r.origin_pr),
       }),
@@ -619,16 +646,21 @@ export async function toolList(
     // output; the tool-catalog `order` description (tool-catalog.ts) says so too.
     const page = selectDiverse(rankedLessons, pageLimit);
 
+    const links = await supersededBy(page.map(({ entry }) => entry.id));
     const entries = page.map(({ entry }) =>
-      projectListEntry(
-        {
-          id: entry.id,
-          key: entry.key,
-          value: entry.value,
-          tags: entry.tags,
-          updated_at: entry.updated_at,
-        },
-        summarize,
+      withSupersededBy(
+        projectListEntry(
+          {
+            id: entry.id,
+            key: entry.key,
+            value: entry.value,
+            tags: entry.tags,
+            updated_at: entry.updated_at,
+            version: entry.version,
+          },
+          summarize,
+        ),
+        links,
       ),
     );
 
@@ -659,14 +691,14 @@ export async function toolList(
   let query = tracedDb
     .from('memories')
     // `scope` selected unconditionally — see the ranked path's note above.
-    .select('id,scope,key,value,tags,updated_at')
+    .select('id,scope,key,value,tags,updated_at,version')
     .is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()')
     .order('updated_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(pageLimit + 1);
   if (scope) query = query.eq('scope', scope);
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
+  if (userId) query = applyTenantScope(query, userId, orgIds, keyScoping);
   if (tags.length) query = query.overlaps('tags', pgArrayLiteral(tags));
   if (kind) query = query.eq('kind', kind);
   if (host) query = query.eq('host', host);
@@ -688,9 +720,10 @@ export async function toolList(
   // legacy shape that predates it — the query above always selects `id`, so
   // filtering `undefined` here is a type narrowing, not an expected drop.
   recordMemoryReads(db, (page.entries as ListRow[]).map((row) => row.id).filter((id): id is string => id !== undefined), 'bulk');
+  const links = await supersededBy((page.entries as ListRow[]).map((row) => row.id));
   return {
     ...page,
-    entries: (page.entries as ListRow[]).map((row) => projectListEntry(row, summarize)),
+    entries: (page.entries as ListRow[]).map((row) => withSupersededBy(projectListEntry(row, summarize), links)),
   };
 }
 
@@ -796,7 +829,7 @@ export async function toolSearch(
   const tracedDb = createTracedClient(db, span);
   let query = tracedDb
     .from('memories')
-    .select('id,key,value,scope,tags,updated_at')
+    .select('id,key,value,scope,tags,updated_at,version')
     .textSearch('fts', q, { type: 'websearch', config: 'english' })
     .is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()')
@@ -806,7 +839,8 @@ export async function toolSearch(
   // Tenant .or() and the scope-glob .or() below are applied as two separate
   // .or() calls, which PostgREST ANDs together — never merged into one
   // filter (see tenant-scope.ts and the Edge Cases note in plan.md).
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
+  const orgIds = userId ? await memberOrgIds(db, userId) : [];
+  if (userId) query = applyTenantScope(query, userId, orgIds, keyScoping);
   if (tags.length) query = query.overlaps('tags', pgArrayLiteral(tags));
   if (scopes?.length) {
     const exactScopes: string[] = [];
@@ -844,7 +878,10 @@ export async function toolSearch(
   span.setAttributes({ 'lorekit.result.count': page.entries.length });
   // memory.search is a BULK read for the per-memory counter (migration 00077).
   recordMemoryReads(db, page.entries.map((e) => e.id), 'bulk');
-  return page;
+  // `superseded_by` (00120): one query over the page, same tenant filter.
+  const links = await fetchSupersededBy(tracedDb, page.entries.map((e) => e.id), (q) =>
+    userId ? applyTenantScope(q, userId, orgIds, keyScoping) : q);
+  return { ...page, entries: page.entries.map((e) => withSupersededBy(e, links)) };
 }
 
 /** Soft-archive a memory by setting archived_at. */

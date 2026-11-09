@@ -11,6 +11,13 @@
 //   cited (ids)   a citation that names a record by its stable id instead of
 //                 by its `scope::key` address, which can change
 //
+// Two more (00120) make a correction visible and safe:
+//   version           every record's content version, starting at 1; read-only
+//   expected_version  on a write, the version the caller last read. A stale one
+//                     is refused with `version_conflict`; 0 means "must not exist"
+//   superseded_by     computed on read (never stored): the ids of the records
+//                     whose `supersedes` names this one
+//
 // `parseRecordFields` is the single, pure validation gate for all of them. It
 // is mirrored self-contained into the Deno edge tree
 // (supabase/functions/_shared/provenance/record-extensions.ts) because BOTH the
@@ -53,6 +60,7 @@ export interface RecordFields {
   attributes: AttributesInput | null;
   contentType: ContentType | null;
   supersedes: string | null;
+  expectedVersion: number | null;
 }
 
 /** The raw, unvalidated write-tool parameters. */
@@ -60,6 +68,30 @@ export interface RecordFieldsInput {
   attributes?: unknown;
   content_type?: unknown;
   supersedes?: unknown;
+  expected_version?: unknown;
+}
+
+/**
+ * A write refused because the record moved on since the caller read it
+ * (00120). A distinct class, not a {@link RecordFieldError}: the request was
+ * well-formed, and the fix is to re-read and retry, not to change the input.
+ * REST answers it with 409 and MCP with an `isError` result; both carry the
+ * stored version so the caller can retry without another read.
+ */
+export class VersionConflictError extends Error {
+  readonly code = 'version_conflict';
+  readonly expectedVersion: number;
+  readonly currentVersion: number;
+  constructor(expectedVersion: number, currentVersion: number) {
+    super(
+      `version_conflict: expected_version ${expectedVersion} does not match the stored version ${currentVersion}` +
+        (currentVersion === 0 ? ' (the memory does not exist)' : '') +
+        '. Re-read the memory, then retry with its current version.',
+    );
+    this.name = 'VersionConflictError';
+    this.expectedVersion = expectedVersion;
+    this.currentVersion = currentVersion;
+  }
 }
 
 /** True when `input` is a record id (a lowercase or uppercase uuid). */
@@ -124,6 +156,18 @@ export function parseSupersedes(input: unknown): string | null {
 }
 
 /**
+ * Validate `expected_version`: a non-negative integer, where 0 means "the
+ * record must not exist yet". Omitted is `null` — no check, today's behaviour.
+ */
+export function parseExpectedVersion(input: unknown): number | null {
+  if (input === undefined || input === null) return null;
+  if (typeof input !== 'number' || !Number.isInteger(input) || input < 0 || input > 2147483647) {
+    throw new RecordFieldError(`expected_version must be a non-negative integer: ${String(input)}`);
+  }
+  return input;
+}
+
+/**
  * Validate and normalise the record-extension write parameters.
  *
  * `value` is the record body: when the write declares `application/json`, the
@@ -146,6 +190,7 @@ export function parseRecordFields(input: RecordFieldsInput, value: string): Reco
     attributes: parseAttributes(input.attributes),
     contentType,
     supersedes: parseSupersedes(input.supersedes),
+    expectedVersion: parseExpectedVersion(input.expected_version),
   };
 }
 
@@ -181,17 +226,30 @@ const DB_FIELD_ERRORS: ReadonlyArray<readonly [string, string]> = [
   ['memories_attributes_max_keys', `attributes must have <= ${ATTRIBUTES_MAX_KEYS} keys`],
 ];
 
-/** Map a database error about a record field to a {@link RecordFieldError}; pass anything else through. */
+/** `memory_write`'s LK003 message (00120): `version_conflict: expected_version=N current_version=M`. */
+const VERSION_CONFLICT_RE = /version_conflict: expected_version=(\d+) current_version=(\d+)/;
+
+/**
+ * Map a database error about a record field to a {@link RecordFieldError}, and
+ * `memory_write`'s version refusal to a {@link VersionConflictError}; pass
+ * anything else through.
+ */
 export function translateRecordFieldDbError(err: unknown): unknown {
   const message = (err as { message?: string } | null | undefined)?.message ?? '';
+  const conflict = VERSION_CONFLICT_RE.exec(message);
+  if (conflict) return new VersionConflictError(Number(conflict[1]), Number(conflict[2]));
   for (const [marker, text] of DB_FIELD_ERRORS) {
     if (message.includes(marker)) return new RecordFieldError(text);
   }
   return err;
 }
 
-/** The columns a read selects to report the record extensions. */
-export const RECORD_FIELD_COLUMNS = 'attributes,content_type,supersedes';
+/**
+ * The columns a read selects to report the record extensions. `version` rides
+ * along and is always returned: unlike the three extensions it has no default
+ * that says nothing (00120).
+ */
+export const RECORD_FIELD_COLUMNS = 'attributes,content_type,supersedes,version';
 
 type WithRecordFields = { attributes?: unknown; content_type?: unknown; supersedes?: unknown };
 
@@ -212,4 +270,40 @@ export function compactRecordFields<T extends WithRecordFields>(
     ...(typeof content_type === 'string' && content_type !== CONTENT_TYPES[0] ? { content_type } : {}),
     ...(supersedes ? { supersedes } : {}),
   };
+}
+
+/** The columns a `superseded_by` lookup selects: the successor and the id it names. */
+export const SUPERSEDED_BY_COLUMNS = 'id,supersedes';
+
+/**
+ * Group successor rows (`{ id, supersedes }`, newest first) by the id they
+ * supersede: `superseded_by` for every record on a page, from ONE query over
+ * the page's ids. Total: a row without both ids is skipped, and a successor
+ * listed twice is kept once.
+ */
+export function groupSupersededBy(
+  rows: ReadonlyArray<{ id?: unknown; supersedes?: unknown }>,
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const row of rows) {
+    if (typeof row?.id !== 'string' || typeof row.supersedes !== 'string') continue;
+    const list = out.get(row.supersedes) ?? [];
+    if (!list.includes(row.id)) list.push(row.id);
+    out.set(row.supersedes, list);
+  }
+  return out;
+}
+
+/**
+ * Attach `superseded_by` to a read result — only when something supersedes it,
+ * the same "say nothing when there is nothing to say" rule
+ * {@link compactRecordFields} applies, so an uncorrected record reads exactly as
+ * before.
+ */
+export function withSupersededBy<T extends { id?: unknown }>(
+  row: T,
+  links: ReadonlyMap<string, string[]>,
+): T & { superseded_by?: string[] } {
+  const ids = typeof row.id === 'string' ? links.get(row.id) : undefined;
+  return ids && ids.length > 0 ? { ...row, superseded_by: ids } : row;
 }

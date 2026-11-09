@@ -370,7 +370,7 @@ class RemoteStore {
     const {
       scope, key, value, tags, source_agent, trigger, kind, host, org, ttl_days, clear_ttl, created_at,
       cited, origin_repo, origin_branch, origin_commit, origin_pr,
-      attributes, content_type, supersedes,
+      attributes, content_type, supersedes, expected_version,
     } = args;
     const body = { scope, key, value };
     if (tags !== undefined) body.tags = tags;
@@ -399,6 +399,10 @@ class RemoteStore {
     if (attributes !== undefined) body.attributes = attributes;
     if (content_type !== undefined) body.content_type = content_type;
     if (supersedes !== undefined) body.supersedes = supersedes;
+    // Optimistic concurrency (00120): sent only when given, so an omitted
+    // version keeps the unconditional write. A mismatch is a 409 whose error
+    // carries `code: 'version_conflict'` and the stored version.
+    if (expected_version !== undefined) body.expected_version = expected_version;
     const res = await this._rest('/memories', { method: 'POST', body });
     // `httpStatus` and `retryAfter` are passed through so a caller can tell the
     // two 429s apart and honour the server's own backoff. They are DIFFERENT
@@ -421,6 +425,9 @@ class RemoteStore {
       // a failure with every field null and no reason. Passed through the way
       // `listScopes` already does.
       unusable: res.unusable ?? false,
+      // The record's version after the write (00120), or null when the write
+      // failed or the server predates the column. Additive.
+      version: Number.isInteger(res.data?.version) ? res.data.version : null,
     };
   }
 

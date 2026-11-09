@@ -31,6 +31,25 @@ export function tooManyRequests(retryAfterSeconds: number, cors: Record<string, 
     { status: 429, headers: { ...h(cors), 'Retry-After': String(retryAfterSeconds) } },
   );
 }
+/**
+ * 409 for a write whose `expected_version` is not the stored version (00120).
+ * `current_version` is in the body so the caller can re-read and retry without
+ * guessing; 0 means the memory does not exist.
+ */
+export function versionConflict(
+  err: { message: string; expectedVersion: number; currentVersion: number },
+  cors: Record<string, string> = {},
+): Response {
+  return new Response(
+    JSON.stringify({
+      error: err.message,
+      code: 'version_conflict',
+      expected_version: err.expectedVersion,
+      current_version: err.currentVersion,
+    }),
+    { status: 409, headers: h(cors) },
+  );
+}
 export function methodNotAllowed(cors: Record<string, string> = {}): Response {
   return new Response(JSON.stringify({ error: 'Method not allowed', code: 'method_not_allowed' }), { status: 405, headers: h(cors) });
 }

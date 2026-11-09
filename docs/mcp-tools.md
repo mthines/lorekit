@@ -100,7 +100,7 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `kind` | | Bucket kind: `lesson`, `bus`, or `signal`. Omit to have it inferred from a `loop::<host>-lessons` tag. See **Taxonomy** below. |
 | `host` | | Owning skill/agent (e.g. `reviewer`, `aw`). Omit to have it inferred from a `loop::<host>-lessons` tag. |
 | `org` | | Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (`member`/`admin`/`owner`, not `viewer`) of the org — verified server-side; supplying an org you're not authorized for is rejected. |
-| `ttl_days` | | Integer 1–365. The memory auto-expires after this many days. Mutually exclusive with `ttl_minutes` and `ttl_seconds`; supply at most one. On an update, refreshes the expiry; omitting all three leaves the existing expiry unchanged. |
+| `ttl_days` | | Integer 1–365. The memory auto-expires after this many days. Mutually exclusive with `ttl_minutes` and `ttl_seconds`; supply at most one. On an update, refreshes the expiry; omitting all three leaves the existing expiry unchanged (except on an `expected_version` write that revives an expired memory, which clears the past expiry). |
 | `ttl_minutes` | | Integer 1–525600 (365 days in minutes). The memory auto-expires after this many minutes. Mutually exclusive with `ttl_days` and `ttl_seconds`. |
 | `ttl_seconds` | | Integer 1–31536000 (365 days in seconds). The memory auto-expires after this many seconds. Useful for short-lived session memories (e.g. 30 s, 5 min). Mutually exclusive with `ttl_days` and `ttl_minutes`. |
 | `origin_repo` | | Provenance: `owner/name` of the repository the lesson was recorded from. Lowercased. |
@@ -111,6 +111,7 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `content_type` | | `text/markdown` (default) or `application/json`. With `application/json` the value must parse. Omit on an update to keep the stored type. |
 | `supersedes` | | The `id` of the memory this one replaces. Must name a memory this token can read **and** that has the same owner as the one being written: your own personal memory for a personal write, a memory in the same org for an org write. Anything else, including an id that does not exist, fails with the same error, so the field cannot be used to probe for ids. Kept on update unless re-supplied. |
 | `cited` | | Lessons that shaped this run, as `scope::key` strings or memory ids. Unresolvable entries are dropped silently. |
+| `expected_version` | | Integer ≥ 0. Write only if the memory at `scope`+`key` is still at this `version`; `0` means it must not exist yet. A mismatch writes nothing and fails with `version_conflict`, naming the stored version. Omit for an unconditional write. See **Versions** below. |
 
 **Provenance (`origin_*`).** `scope` says where a lesson **applies**; the four
 `origin_*` fields say where it was **recorded from**, and the dashboard turns
@@ -166,6 +167,37 @@ All three are validated by the shared parser in
 inputs with the same message. `PATCH /memories/:id` does not accept them; set
 them with a write.
 
+**Versions (`version` / `expected_version` / `superseded_by`).** Every memory
+carries a `version` (migration 00120): `1` when it is created, and one higher
+each time its **content** changes — `value`, `content_type`, `attributes`,
+`tags`, or a `supersedes` link being set or changed. Nothing else bumps it: not
+a TTL change, a counter (`seen_count`, reads), an embedding, archive/restore, a
+move between owners, a link cleared because its target was deleted, or a write
+that changes nothing. A database trigger maintains it, so no caller can set it.
+A write to an archived key starts a new record at version `1`.
+
+`expected_version` turns a write into a compare-and-set. Read the memory, keep
+its `version`, and pass it back on the write: if anyone changed the content in
+between, the write is refused instead of silently overwriting their change.
+`expected_version: 0` creates the memory only if it does not exist yet — an
+archived or expired memory counts as absent, exactly as reads hide it (an expired
+one is rewritten in place and keeps counting from its old version; with no
+`ttl_days` / `ttl_minutes` / `ttl_seconds` / `clear_ttl` on that write its past expiry is cleared, so the
+record is live again). The
+check is atomic in the `memory_write` RPC. A refusal is an `isError` tool
+result (REST: `409`) with code `version_conflict`:
+
+```text
+version_conflict: expected_version 3 does not match the stored version 4. Re-read the memory, then retry with its current version.
+```
+
+`superseded_by` is the reverse of `supersedes`: on `memory.read`,
+`memory.list` and `memory.search`, a memory that other live records name in
+their `supersedes` carries their ids, newest first. It is computed on read,
+never stored, with one query per page; it only names records the caller can
+read (same tenant filter as the read itself) that are neither archived nor
+expired, and it is omitted when empty.
+
 **Taxonomy (`kind` / `host`).** A self-improvement loop's bucket carries two
 facts: WHAT KIND of memory it is and WHICH HOST owns it. `kind` is a closed
 vocabulary — `lesson` (procedural, read every run), `bus` (a transient outcome
@@ -180,7 +212,7 @@ an update the last KNOWN value wins, exactly like `origin_*`.
 
 **Scope→org binding.** If you omit `org` but the scope is **bound to an org** (an admin set that up — see [org-sharing.md](./org-sharing.md#scope--org-binding-auto-routing)), the write auto-routes to that org **when you're a write-capable member**. A binding can also be a **wildcard prefix** (`repo::owner/*`), and when several bindings match, resolution is **most-specific-wins** (an exact scope beats any wildcard; a longer wildcard prefix beats a shorter one). If you're *not* a member of the winning org, it's saved to your personal lore instead (never rejected) and the response carries a `notice` explaining that — unless your token is limited to selected orgs (`orgs_only`), which may not write personal memories: that write is refused with an in-band `isError` result (`key_personal_denied`), so pass `org`. An explicit `org` always overrides binding resolution entirely.
 
-**Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }` — the `id` is the memory's stable identity, kept across updates — plus an optional `"expires_at": "<iso>"` when any `ttl_*` field was supplied, and an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
+**Returns:** `{ "id": "<uuid>", "created_at": "<iso>", "version": <n> }` — the `id` is the memory's stable identity, kept across updates; `version` is its version after this write — plus an optional `"expires_at": "<iso>"` when any `ttl_*` field was supplied, and an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
 
 **Default TTL — there isn't one, server-side.** Omitting every `ttl_*` field
 means the memory never expires, and that is unchanged. Two things nonetheless
@@ -218,9 +250,11 @@ scope you can see (see [Unscoped reads](#unscoped-reads)).
 }
 ```
 
-**Returns:** `{ "id": "<uuid>", "value": "<markdown>", "updated_at": "<iso>", "scope": "<canonical scope>" }`, or
+**Returns:** `{ "id": "<uuid>", "value": "<markdown>", "updated_at": "<iso>", "scope": "<canonical scope>", "version": <n> }`, or
 `null` if not found. `id` is the memory's stable identity (what `supersedes` and `cited` accept).
-`attributes`, `content_type` and `supersedes` are included only when they hold a non-default value. `scope` names the scope that actually answered — the same value you passed when
+`attributes`, `content_type` and `supersedes` are included only when they hold a non-default value.
+`superseded_by` (the ids of newer records that replace this one) is included only when non-empty —
+see **Versions** under `memory.write`. `scope` names the scope that actually answered — the same value you passed when
 you passed one, and the resolved winner when you did not. An ambiguous unscoped read additionally
 carries `other_scopes: ["<scope>", …]`, every OTHER scope the key also exists in.
 
@@ -304,7 +338,7 @@ reference past the 32nd, so neither appears in `entries` or in `missing`: the li
 report, never a malformed-input or truncation one. To tell "absent" from "never looked up", compare
 `entries` + `missing` against what you sent.
 
-**Returns:** `{ "entries": [{ "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }`
+**Returns:** `{ "entries": [{ "scope", "key", "value", "updated_at", "version" }], "missing": ["scope::key", …] }` (each entry also carries `superseded_by` when non-empty)
 — `missing` names every well-formed reference within the first 32 that matched no lesson, in no
 particular order.
 
@@ -342,7 +376,7 @@ a list returns every match rather than one winner.
 | `host` | | Filter to the owning skill/agent, e.g. `reviewer`, `aw`, `ci-auto-fix` |
 | `view` | `full` | `full` returns each entry's complete `value`. `summary` omits `value` and returns `value_bytes` + a 200-character `preview` instead |
 
-**Returns:** `{ "entries": [{ "scope", "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — with `view: "summary"` each entry is `{ "scope", "key", "tags", "updated_at", "value_bytes", "preview" }` instead, and `value` is omitted entirely. `scope` is present on every entry, scoped call or not, so one response shape covers both.
+**Returns:** `{ "entries": [{ "scope", "key", "value", "tags", "updated_at", "version" }], "hasMore": boolean, "nextCursor": string | null }` — each entry also carries `superseded_by` when non-empty; with `view: "summary"` each entry is `{ "scope", "key", "tags", "updated_at", "version", "value_bytes", "preview" }` instead, and `value` is omitted entirely. `scope` is present on every entry, scoped call or not, so one response shape covers both.
 
 - `recency` (default): pass `nextCursor` back as `cursor` to read the next page.
 - `rank`: a single bounded top-N page — `hasMore` is always `false` and `nextCursor` always `null`.
@@ -459,7 +493,7 @@ Full-text search across all lessons. Supports owner-level scope wildcards.
 | `tags` | `[]` | AND-filter on tags |
 | `limit` | `20` | Max results (cap: 100) |
 
-**Returns:** `{ "entries": [{ "key", "value", "scope", "tags", "rank" }] }`
+**Returns:** `{ "entries": [{ "key", "value", "scope", "tags", "version", "rank" }] }` (each entry also carries `superseded_by` when non-empty)
 
 ---
 

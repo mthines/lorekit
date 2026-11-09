@@ -236,7 +236,8 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.registerPath({
     method: 'post', path: '/memories', summary: 'Create or update a memory', tags: ['Memories'],
     security, request: { body: { content: { 'application/json': { schema: CreateMemoryBodySchema } } } },
-    responses: { 201: memoryResponse('Created'), 400: errorResponse, 401: errorResponse, 429: errorResponse },
+    description: 'With `expected_version`, the write is conditional: a `409` with `code: "version_conflict"` and the stored `current_version` means nothing was written (`0` = the memory must not exist yet).',
+    responses: { 201: memoryResponse('Created'), 400: errorResponse, 401: errorResponse, 409: errorResponse, 429: errorResponse },
   });
   registry.registerPath({
     method: 'post', path: '/memories/search', summary: 'Search memories with OR+AND filtering', tags: ['Memories'],
@@ -590,12 +591,13 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   });
   registry.registerPath({
     method: 'patch', path: '/memories/{id}', summary: 'Update a memory', tags: ['Memories'],
+    description: 'With `expected_version`, the update applies only while the memory is at that version; otherwise a `409` with `code: "version_conflict"` and the stored `current_version`, and nothing changes. An archived or expired memory is `404`, exactly as on `GET /memories/{id}` — and is `404`, not `409`, with an `expected_version` too.',
     security,
     request: {
       params: MemoryIdParamsSchema,
       body: { content: { 'application/json': { schema: UpdateMemoryBodySchema } } },
     },
-    responses: { 200: memoryResponse('Updated memory'), 400: errorResponse, 404: errorResponse, 401: errorResponse },
+    responses: { 200: memoryResponse('Updated memory'), 400: errorResponse, 404: errorResponse, 409: errorResponse, 401: errorResponse },
   });
   registry.registerPath({
     method: 'delete', path: '/memories/{id}',

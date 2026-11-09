@@ -8,7 +8,8 @@ import { SearchMemoriesBodySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_
 import { normalizeTagList, pgArrayLiteral } from '../../_shared/schemas/tags.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/db/database.types.ts';
-import { getMemberOrgIds, applyRestTenantScope, firstDeniedScope } from '../../_shared/api/tenant.ts';
+import { getMemberOrgIds, applyRestTenantScope, firstDeniedScope, restSupersededBy } from '../../_shared/api/tenant.ts';
+import { withSupersededBy } from '../../_shared/provenance/record-extensions.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { applyFilter } from '../../_shared/api/filter.ts';
 import { recordMemoryReads } from '../../_shared/telemetry/memory-reads.ts';
@@ -39,8 +40,8 @@ export async function handleSearch(
 
   // api_key auth uses service-role client (bypasses RLS) — apply tenant filter.
   // JWT auth uses RLS-scoped client — RLS handles visibility automatically.
-  if (auth.type === 'api_key' && auth.userId) {
-    const orgIds = await getMemberOrgIds(db, auth.userId, span);
+  const orgIds = auth.type === 'api_key' && auth.userId ? await getMemberOrgIds(db, auth.userId, span) : undefined;
+  if (auth.type === 'api_key' && auth.userId && orgIds) {
     q = applyRestTenantScope(q, auth.userId, orgIds, keyRestriction(auth));
   }
   if (body.q) q = q.textSearch('fts', body.q, { type: 'websearch', config: 'english' });
@@ -72,7 +73,10 @@ export async function handleSearch(
   const page = buildPage(data ?? [], body.limit);
   span.setAttributes({ 'lorekit.result_count': page.entries.length });
   // Record count for the router's usage event — see RESULT_COUNT_HEADER.
-  const res = ok({ ...page, entries: page.entries.map(shapeMemoryRow) }, cors);
+  // `superseded_by` (00120): one query over the page, same visibility. Search
+  // filtering is unchanged — a superseded record still appears, marked.
+  const links = await restSupersededBy(db, auth, span, page.entries.map((e) => e.id), orgIds);
+  const res = ok({ ...page, entries: page.entries.map((e) => withSupersededBy(shapeMemoryRow(e), links)) }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
   // memory.search is a BULK read for the per-memory counter (migration 00077).
   recordMemoryReads(db, page.entries.map((e) => e.id), 'bulk');
