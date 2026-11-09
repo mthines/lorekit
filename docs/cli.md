@@ -544,8 +544,9 @@ swallowed and nothing but that state file is ever written]; always exit 0, best-
 the host
 
 On SessionStart the read covers the workspace scopes plus any listed in
-`hooks.sessionStart.scopes` (`withPinnedScopes` slots them before `global`); lessons from those pinned
-scopes skip the ranking and lead the block, and the ranked, diversified rest fills what is left.
+`hooks.sessionStart.scopes` (`withPinnedScopes` slots them before `global`). Listed scopes the
+workspace would not otherwise read are pinned: their lessons skip the ranking and lead the block, and
+the ranked, diversified rest fills what is left. A listed `global` or workspace scope stays in the ranking.
 
 ### `mcp`
 
