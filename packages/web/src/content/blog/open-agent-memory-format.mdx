@@ -78,7 +78,7 @@ These mostly solve **export**: moving one person's memory from vendor A to vendo
 
 ## What a shared spec could look like
 
-Strip away the branding and every format answers the same four questions differently: **where** a memory is true, **what its identity is** (does a second write update it or duplicate it?), **what it says**, and **when it stops being true**. Nobody disagrees that those matter. The tools only disagree on the answers, which is where OpenTelemetry started too.
+Strip away the branding and every format answers the same five questions differently: **where** a memory is true, **what its identity is** (does a second write update it or duplicate it?), **what it says**, **when it stops being true**, and **which version is current**. Nobody disagrees that those matter. The tools only disagree on the answers, which is where OpenTelemetry started too.
 
 There's one real fork: **who writes the memory**. In instruction files it's a person. In the memory tool, Letta and LoreKit, it's the model. In Mem0 and Graphiti, a service extracts facts from the conversation. A spec doesn't need to pick one. It needs to *record* which, so a reader knows how much to trust what it reads.
 
@@ -91,6 +91,8 @@ id: 8f0c2a6e-4b1d-4c7a-9e2f-3a5b6c7d8e9f
 address: { level: repo, value: github.com/acme/checkout }
 key: tests-need-local-postgres
 kind: lesson
+version: 3
+supersedes: 41b9e0c2-7d3a-4f15-8c6e-0a9b8c7d6e5f
 written_by: { type: agent, name: claude-code }
 content_type: text/markdown
 lifecycle: { expires_at: null, extended_by: write }
@@ -104,13 +106,13 @@ is already running. Start it before `pnpm test`:
 The test setup does not start it for you.
 ```
 
-The frontmatter is the envelope: `address` and `key` say where it's true, `id` is its identity, `lifecycle` says when it stops, and `written_by` answers the fork. The Markdown below it is the memory itself, and `content_type` tells a reader how to treat it. Anything else a tool needs goes in `attributes`, under a namespace other tools can ignore. The same record serialises to JSON just as well, for a tool that wants to send it over the wire.
+The frontmatter is the envelope: `address` and `key` say where it's true, `id` is its identity, `lifecycle` says when it stops, and `written_by` answers the fork. `version` counts the corrections to this record, and `supersedes` names an older record this one replaces, so a reader of that older record can be told it's out of date. The Markdown below it is the memory itself, and `content_type` tells a reader how to treat it. Anything else a tool needs goes in `attributes`, under a namespace other tools can ignore. The same record serialises to JSON just as well, for a tool that wants to send it over the wire.
 
 Around that record, a spec would mirror OpenTelemetry's layers:
 
 - **Conventions**: shared names for address levels (`global`, `project`, `repo`, `branch`, and whatever monorepos need), for kinds, and for attribute namespaces (`vcs.*`, `ci.*`, `agent.*`), in one versioned registry.
 - **A contract**: a few operations (write, read, list, search, archive) with fixed inputs and outputs, exposed over MCP. Many memory servers now offer an MCP interface, but each exposes different tools with different meanings.
-- **Conformance tests** in place of a reference implementation: round-trip a record and check nothing was lost, check that unknown attributes survive a rewrite, check that expiry behaves as stated.
+- **Conformance tests** in place of a reference implementation: round-trip a record and check nothing was lost, check that unknown attributes survive a rewrite, check that expiry behaves as stated, check that a superseded record reads as superseded.
 
 What stays *out* matters as much: storage, ranking, embeddings, the user interface. That's where tools should compete. And the spec should live somewhere neutral, not in LoreKit's repo or any single vendor's.
 
@@ -119,6 +121,8 @@ What stays *out* matters as much: storage, ranking, embeddings, the user interfa
 **"You build a memory tool, so of course you want a standard shaped like it."** Fair. It's why LoreKit is one row in the table rather than the template. If a shared spec looks different, LoreKit should adopt it anyway.
 
 **"MCP already is the standard."** MCP standardises the *call*, not the *record*. OpenTelemetry needed a protocol *and* a data model. Memory needs both too.
+
+**"Traces are append-only. Memories get corrected."** This is where the OpenTelemetry analogy is weakest. A span is written once and never changes. A runbook written in January gets corrected in March, and if nothing records that, both copies look right to the next agent. So the version rule is part of the standard, not a detail for each tool: a counter that goes up on every correction, and a link from the new record to the one it replaces. If every tool invents its own rule here, the lock-in stays, however well the formats line up.
 
 **"Shared memory is a prompt-injection channel."** Yes. Anything an agent reads can steer it, and shared memory widens who gets to write it. A spec should make that visible: record who wrote each memory, allow signatures (Portable Memory already does), and let a record point at the code it depends on so a reader can check whether that code changed. No format makes poisoning impossible.
 
