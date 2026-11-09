@@ -37,6 +37,10 @@
 //   --content-type <type>  text/markdown (default) or application/json (the
 //                          value must then parse as JSON)
 //   --supersedes <id>      The id of the memory this one replaces
+//   --expected-version <n> Optimistic concurrency: write only if the memory is
+//                          still at version n (0 = it must not exist yet). A
+//                          mismatch writes nothing, names the stored version,
+//                          and exits non-zero
 //
 // `--cited` credits the lore that shaped the work being written up. It is the
 // only signal that distinguishes a lesson that was read from one that was used:
@@ -276,6 +280,19 @@ export async function write(args) {
   const contentType = args['content-type'];
   const supersedes = args.supersedes;
 
+  // `--expected-version` (00120). Validated here, at the flag seam, like
+  // `--origin-pr`: a bare flag or a non-integer is a usage error, never dropped
+  // — a dropped check would turn a guarded write into an unconditional one.
+  let expectedVersion;
+  if (args['expected-version'] !== undefined) {
+    const raw = args['expected-version'];
+    expectedVersion = typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion > 2147483647) {
+      err(`${c.red('Error:')} --expected-version must be a non-negative integer (got ${raw === true ? 'no value' : raw})`);
+      return 1;
+    }
+  }
+
   // ── Provenance ────────────────────────────────────────────────────────────
   // Derived from git + CI unless --no-origin; explicit --origin-* flags win.
   // A field that is neither supplied nor derivable is omitted, never sent as
@@ -381,6 +398,7 @@ export async function write(args) {
     ...(attributes ? { attributes } : {}),
     ...(contentType ? { content_type: contentType } : {}),
     ...(supersedes ? { supersedes } : {}),
+    ...(expectedVersion !== undefined ? { expected_version: expectedVersion } : {}),
     ...origin,
   };
 
@@ -393,7 +411,17 @@ export async function write(args) {
   }
 
   if (!result || result.ok === false) {
-    const detail = result && result.error ? result.error : 'unknown error';
+    // The local store reports a string; the remote one a `{ message, code }`
+    // object, which interpolated bare would print as `[object Object]`.
+    const error = result?.error;
+    const detail = typeof error === 'string' ? error : error?.message || 'unknown error';
+    const code = result?.code ?? (typeof error === 'object' ? error?.code : undefined);
+    if (code === 'version_conflict') {
+      const current = result?.current_version ?? error?.current_version;
+      err(`${c.red('Error:')} version conflict — ${scope}::${key} is at version ${current ?? 'unknown'}, not ${expectedVersion}. Nothing was written.`);
+      err(`Re-read it (${c.cyan(`lorekit show ${scope}::${key}`)}), then retry with --expected-version ${current ?? '<current>'}.`);
+      return { exitCode: 1, 'lorekit.cli.write.store': storeName, 'lorekit.cli.write.version_conflict': true };
+    }
     err(`${c.red('Error writing to')} ${storeName} store: ${detail}`);
     return 1;
   }
@@ -401,6 +429,9 @@ export async function write(args) {
   // `inserted` is additive from the remote (memory_write RPC 00011). Local store
   // returns { ok, entry } with no explicit field; treat absence as unknown.
   const inserted = result.inserted ?? null;
+  // The record's version after this write (00120): the remote reports it on the
+  // result, the local store on the entry it wrote. Null when unknown.
+  const version = result.version ?? result.entry?.version ?? null;
 
   if (args.json) {
     log(JSON.stringify({
@@ -408,6 +439,7 @@ export async function write(args) {
       key,
       store: storeName,
       inserted,
+      version,
       value: String(value),
       tags,
       source_agent: sourceAgent || null,
@@ -424,6 +456,7 @@ export async function write(args) {
     log(`  ${c.dim('scope')}  ${scope}`);
     log(`  ${c.dim('key')}    ${key}`);
     if (tags.length) log(`  ${c.dim('tags')}   ${tags.join(', ')}`);
+    if (version != null) log(`  ${c.dim('version')} ${version}`);
     // Name the source. A TTL the caller typed needs no explanation; one that came
     // from a config file two directories up does, or the first surprise is a
     // memory that quietly vanished.

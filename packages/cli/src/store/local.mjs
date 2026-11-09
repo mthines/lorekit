@@ -13,7 +13,7 @@ import {
 } from './format.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
 import { isLive, resolveExpiresAt } from './ttl.mjs';
-import { seenCountOf, withReadFields, updatedAtOf } from './entry-fields.mjs';
+import { seenCountOf, withReadFields, updatedAtOf, versionOf } from './entry-fields.mjs';
 import { pickScopeWinner } from '../shared/scope-precedence.mjs';
 import { matchesTags } from '../shared/lessons-pure.mjs';
 
@@ -98,7 +98,7 @@ class LocalStore {
     if (limit) rows = rows.slice(0, limit);
     // The same additive projection the remote store applies, so a caller that
     // ranks entries never has to ask which store produced them.
-    return { ok: true, entries: rows.map(withReadFields) };
+    return { ok: true, entries: rows.map(projectEntry) };
   }
 
   // read({ scope, key }) → { ok, entry } — null when absent, archived, or expired.
@@ -108,20 +108,27 @@ class LocalStore {
   // the SAME rule the hosted MCP and REST surfaces apply, so `lorekit show
   // <key>` offline and `memory.read { key }` online cannot resolve the same key
   // to different lessons.
+  //
+  // A found entry carries `superseded_by` (00120) when any live record in this
+  // store names it in `supersedes` — see `attachSupersededBy`.
   async read({ scope, key } = {}) {
-    if (!scope) return { ok: true, entry: this._readUnscoped(key) };
+    const entry = this._read({ scope, key });
+    return { ok: true, entry: entry ? attachSupersededBy([entry], [this])[0] : null };
+  }
+
+  // `read` without the `superseded_by` lookup, so `TwoTierStore` can resolve
+  // the entry per tier and look successors up once, across both tiers.
+  _read({ scope, key } = {}) {
+    if (!scope) return this._readUnscoped(key);
     const found = this._findByKey(scope, key);
-    return {
-      ok: true,
-      entry: found && isLive(found.entry) ? withReadFields(found.entry) : null,
-    };
+    return found && isLive(found.entry) ? projectEntry(found.entry) : null;
   }
 
   // The unscoped half of `read`, split out so `TwoTierStore` can reuse the
   // candidate gathering without re-deciding the precedence rule.
   _readUnscoped(key) {
     const winner = pickScopeWinner(this._findAllByKey(key).map(scopeCandidate));
-    return winner ? withReadFields(winner.entry) : null;
+    return winner ? projectEntry(winner.entry) : null;
   }
 
   // readMany(refs) → { ok, entries, missing } — batch lookup for an array of
@@ -137,12 +144,12 @@ class LocalStore {
     for (const { scope, key } of refs) {
       const found = this._findByKey(scope, key);
       if (found && isLive(found.entry)) {
-        entries.push(withReadFields(found.entry));
+        entries.push(projectEntry(found.entry));
       } else {
         missing.push(`${scope}::${key}`);
       }
     }
-    return { ok: true, entries, missing };
+    return { ok: true, entries: attachSupersededBy(entries, [this]), missing };
   }
 
   // write(...) → { ok, entry } — upsert by scope+key. Preserves `created` and
@@ -158,7 +165,7 @@ class LocalStore {
   async write({
     scope, key, value, tags, source_agent, trigger, created_at, ttl_days, clear_ttl,
     origin_repo, origin_branch, origin_commit, origin_pr, kind, host,
-    attributes, content_type, supersedes,
+    attributes, content_type, supersedes, expected_version,
   } = {}) {
     const now = new Date().toISOString();
     const existing = this._findByKey(scope, key);
@@ -193,6 +200,26 @@ class LocalStore {
         : null)
       ?? (supersedesId && supersedesId === live?.id ? 'a memory cannot supersede itself' : null);
     if (issue) return { ok: false, error: issue };
+    // Optimistic concurrency (00120), the local twin of the hosted check in
+    // `memory_write`: the write lands only when the record is still at the
+    // version the caller last read, and `0` means "must not exist yet". An
+    // archived record is not live, so like the server it counts as absent.
+    // Omitted → no check, exactly as before.
+    if (expected_version != null) {
+      if (!Number.isInteger(expected_version) || expected_version < 0) {
+        return { ok: false, error: 'expected_version must be a non-negative integer' };
+      }
+      const current = live ? versionOf(live) : 0;
+      if (expected_version !== current) {
+        return {
+          ok: false,
+          code: 'version_conflict',
+          current_version: current,
+          error: `version_conflict: expected_version ${expected_version} does not match the stored version ${current}`
+            + `${current === 0 ? ' (the memory does not exist)' : ''}. Re-read the memory, then retry with its current version.`,
+        };
+      }
+    }
     let override, expires_at;
     try {
       override = normalizeCreatedAt(created_at);
@@ -205,12 +232,15 @@ class LocalStore {
     const dir = this._dir(scope);
     fs.mkdirSync(dir, { recursive: true });
     const created = existing ? existing.entry.created || now : override || now;
+    const nextTags = Array.isArray(tags) ? tags : [];
+    const nextValue = value == null ? '' : String(value);
+    const nextSupersedes = supersedesId ?? live?.supersedes ?? null;
     const entry = {
       // Fields this version does not know survive the rewrite (lossless).
       ...extraFields(existing?.entry),
       scope,
       key,
-      tags: Array.isArray(tags) ? tags : [],
+      tags: nextTags,
       source_agent: source_agent || null,
       trigger: trigger || null,
       // Provenance keeps the last KNOWN value per field, mirroring the hosted
@@ -250,8 +280,17 @@ class LocalStore {
       id: live?.id || randomUUID(),
       attributes: mergedAttributes,
       content_type: contentType,
-      supersedes: supersedesId ?? live?.supersedes ?? null,
-      value: value == null ? '' : String(value),
+      supersedes: nextSupersedes,
+      // Version (00120), bumped under the hosted trigger's rule: only a change
+      // a reader can see counts. A first write — or a revive of an archived
+      // key, which the server inserts as a fresh row — starts at 1.
+      version: live
+        ? versionOf(live) + (contentChanged(live, {
+          value: nextValue, content_type: contentType, attributes: mergedAttributes,
+          tags: nextTags, supersedes: supersedesId,
+        }) ? 1 : 0)
+        : 1,
+      value: nextValue,
     };
     const file = existing ? existing.file : this._freshPath(dir, key);
     fs.writeFileSync(file, serializeEntry(entry));
@@ -295,6 +334,9 @@ class LocalStore {
       attributes: entry.attributes ?? {},
       content_type: entry.content_type ?? null,
       supersedes: entry.supersedes ?? null,
+      // Verbatim: a relocated record keeps its version. One that never carried
+      // one lands as null and reads back as 1.
+      version: entry.version ?? null,
       value: entry.value == null ? '' : String(entry.value),
     };
     const file = existing ? existing.file : this._freshPath(dir, entry.key);
@@ -447,6 +489,68 @@ function scopeCandidate(entry) {
   return { scope: entry.scope, updated_at: updatedAtOf(entry), entry };
 }
 
+// The read projection every local read applies: the shared `withReadFields`,
+// plus the record's `version` resolved through `versionOf`, so a file written
+// before the column existed reads as version 1 rather than as no version.
+function projectEntry(entry) {
+  return withReadFields({ ...entry, version: versionOf(entry) });
+}
+
+// Did a write change what a reader reads? The local twin of the hosted
+// `memories_bump_version` trigger (00120): value, content_type (null and
+// text/markdown are the same type), attributes, tags, or a NEW non-null
+// supersedes link. TTL, provenance, taxonomy and the sighting count do not.
+// `next.supersedes` is the link the write named, null when it named none.
+function contentChanged(prev, next) {
+  if (String(prev.value ?? '') !== next.value) return true;
+  if ((prev.content_type || 'text/markdown') !== (next.content_type || 'text/markdown')) return true;
+  if (canonicalJson(prev.attributes ?? {}) !== canonicalJson(next.attributes ?? {})) return true;
+  if (JSON.stringify(Array.isArray(prev.tags) ? prev.tags : []) !== JSON.stringify(next.tags)) return true;
+  return next.supersedes != null && next.supersedes !== (prev.supersedes ?? null);
+}
+
+// JSON with object keys sorted, so two attribute maps that differ only in key
+// order compare equal — jsonb equality, which the server's trigger relies on.
+function canonicalJson(v) {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
+  if (v && typeof v === 'object') {
+    return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(v[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(v);
+}
+
+/**
+ * Attach `superseded_by` (00120) to each entry: the ids of the LIVE records,
+ * across `stores`, whose `supersedes` names the entry's id — newest first.
+ * Never stored, computed on read like the hosted field, and omitted when empty
+ * (as the server omits it). One walk per store for the whole batch, never one
+ * per entry. Only `read`/`readMany` call this: `list`/`search` would pay a
+ * whole-tree walk on the hook hot path for a field nobody there reads.
+ */
+function attachSupersededBy(entries, stores) {
+  const ids = new Set(entries.map((e) => e && e.id).filter((id) => typeof id === 'string' && id));
+  if (ids.size === 0) return entries;
+  const now = new Date();
+  const seen = new Set();
+  const successors = [];
+  for (const store of stores) {
+    for (const { entry } of store._walkEntries()) {
+      if (!entry || !entry.id || seen.has(entry.id)) continue;
+      if (!ids.has(entry.supersedes) || !isLive(entry, now)) continue;
+      seen.add(entry.id);
+      successors.push(entry);
+    }
+  }
+  if (successors.length === 0) return entries;
+  successors.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
+  const byTarget = new Map();
+  for (const s of successors) {
+    if (!byTarget.has(s.supersedes)) byTarget.set(s.supersedes, []);
+    byTarget.get(s.supersedes).push(s.id);
+  }
+  return entries.map((e) => (e && byTarget.has(e.id) ? { ...e, superseded_by: byTarget.get(e.id) } : e));
+}
+
 // A scope string is global when its type segment is `global`.
 function isGlobalScope(scope) {
   return String(scope).split('::')[0] === 'global';
@@ -533,13 +637,25 @@ class TwoTierStore {
         }
       }
       const winner = pickScopeWinner([...byScope.values()].map(scopeCandidate));
-      return { ok: true, entry: winner ? withReadFields(winner.entry) : null };
+      const entry = winner ? projectEntry(winner.entry) : null;
+      return { ok: true, entry: entry ? attachSupersededBy([entry], this._tiers())[0] : null };
     }
+    const entry = this._read({ scope, key });
+    return { ok: true, entry: entry ? attachSupersededBy([entry], this._tiers())[0] : null };
+  }
+
+  // The tiers a read can see, project first.
+  _tiers() {
+    return this.projectActive() ? [this.project, this.home] : [this.home];
+  }
+
+  // A scoped read without the successor lookup: project shadows home.
+  _read({ scope, key } = {}) {
     if (this.projectActive()) {
-      const r = await this.project.read({ scope, key });
-      if (r.entry) return r;
+      const entry = this.project._read({ scope, key });
+      if (entry) return entry;
     }
-    return this.home.read({ scope, key });
+    return this.home._read({ scope, key });
   }
 
   // readMany(refs) → { ok, entries, missing } — per-ref `read()`, so the same
@@ -549,11 +665,11 @@ class TwoTierStore {
     const entries = [];
     const missing = [];
     for (const { scope, key } of refs) {
-      const r = await this.read({ scope, key });
-      if (r.entry) entries.push(r.entry);
+      const entry = scope ? this._read({ scope, key }) : (await this.read({ scope, key })).entry;
+      if (entry) entries.push(entry);
       else missing.push(`${scope}::${key}`);
     }
-    return { ok: true, entries, missing };
+    return { ok: true, entries: attachSupersededBy(entries, this._tiers()), missing };
   }
 
   async write(args = {}) {

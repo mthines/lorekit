@@ -425,7 +425,13 @@ function renderRecordSection(title, section, subtitle) {
 
   const e = section.record;
   if (e.updated) log(`  ${c.dim('updated')} ${shortDate(e.updated)}`);
+  if (e.version != null) log(`  ${c.dim('version')} ${e.version}`);
   if (e.tags && e.tags.length) log(`  ${c.dim('tags')}    ${e.tags.join(', ')}`);
+  // A newer record names this one in its `supersedes`: say so, since a reader
+  // acting on a replaced lesson is the case the link exists to prevent.
+  if (e.superseded_by && e.superseded_by.length) {
+    log(`  ${c.dim('superseded by')} ${e.superseded_by.join(', ')}`);
+  }
   log(`  ${c.dim('value')}`);
   // The full, untruncated body — indented, line by line, so multi-line lessons
   // read as written.

@@ -212,3 +212,134 @@ test('revive: a revived key is a new record that may supersede its archived pred
   assert.notEqual(revived.entry.id, first.entry.id);
   assert.equal(revived.entry.supersedes, first.entry.id);
 });
+
+// ── Version + optimistic concurrency + superseded_by (00120's offline twin) ──
+
+function cliEnv(home) {
+  const env = { ...process.env, NO_COLOR: '1', HOME: home, USERPROFILE: home, LOREKIT_HOME: home, LOREKIT_TELEMETRY: '0' };
+  delete env.LOREKIT_TOKEN;
+  delete env.LOREKIT_MCP_URL;
+  delete env.LOREKIT_ENDPOINT;
+  return env;
+}
+
+test('version: starts at 1 and bumps only on a content change', async () => {
+  const store = createLocalStore(tmp('lk-ver-bump-'));
+  const w = (args) => store.write({ scope: 'global', key: 'k', ...args });
+  assert.equal((await w({ value: 'one' })).entry.version, 1);
+  // An identical rewrite is not a change.
+  assert.equal((await w({ value: 'one' })).entry.version, 1);
+  assert.equal((await w({ value: 'two' })).entry.version, 2);
+  assert.equal((await w({ value: 'two', tags: ['a'] })).entry.version, 3);
+  assert.equal((await w({ value: 'two', tags: ['a'], attributes: { 'x.y': 1 } })).entry.version, 4);
+  // The same attribute again merges to the same map: no change.
+  assert.equal((await w({ value: 'two', tags: ['a'], attributes: { 'x.y': 1 } })).entry.version, 4);
+  // text/markdown is what null means, so naming it is not a change.
+  assert.equal((await w({ value: 'two', tags: ['a'], content_type: 'text/markdown' })).entry.version, 4);
+  const target = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6b';
+  assert.equal((await w({ value: 'two', tags: ['a'], supersedes: target })).entry.version, 5);
+  // Re-naming the same link, TTL, provenance and taxonomy are not content.
+  assert.equal((await w({ value: 'two', tags: ['a'], supersedes: target })).entry.version, 5);
+  assert.equal((await w({ value: 'two', tags: ['a'], ttl_days: 7 })).entry.version, 5);
+  assert.equal((await w({ value: 'two', tags: ['a'], origin_repo: 'o/r', kind: 'lesson' })).entry.version, 5);
+  // Archive/restore does not bump; a write to an archived key starts at 1.
+  await store.archive({ scope: 'global', key: 'k' });
+  await store.restore({ scope: 'global', key: 'k' });
+  assert.equal((await store.read({ scope: 'global', key: 'k' })).entry.version, 5);
+  await store.archive({ scope: 'global', key: 'k' });
+  assert.equal((await w({ value: 'reborn' })).entry.version, 1);
+});
+
+test('version: a file written before the column existed reads, and rewrites, from 1', async () => {
+  const dir = tmp('lk-ver-legacy-');
+  const store = createLocalStore(dir);
+  await store.write({ scope: 'global', key: 'k', value: 'v' });
+  const { file } = readOnly(dir);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^version: .*\n/m, ''));
+  assert.equal((await store.read({ scope: 'global', key: 'k' })).entry.version, 1);
+  assert.equal((await store.list({ scope: 'global' })).entries[0].version, 1);
+  assert.equal((await store.write({ scope: 'global', key: 'k', value: 'v2' })).entry.version, 2);
+});
+
+test('expected_version: a match writes, a mismatch refuses and writes nothing', async () => {
+  const dir = tmp('lk-ver-cas-');
+  const store = createLocalStore(dir);
+  // 0 = must not exist yet.
+  assert.equal((await store.write({ scope: 'global', key: 'k', value: 'a', expected_version: 0 })).ok, true);
+  const again = await store.write({ scope: 'global', key: 'k', value: 'b', expected_version: 0 });
+  assert.equal(again.ok, false);
+  assert.equal(again.code, 'version_conflict');
+  assert.equal(again.current_version, 1);
+  assert.match(again.error, /^version_conflict: expected_version 0 does not match the stored version 1/);
+  assert.equal(readOnly(dir).entry.value, 'a');
+
+  assert.equal((await store.write({ scope: 'global', key: 'k', value: 'b', expected_version: 1 })).entry.version, 2);
+  const stale = await store.write({ scope: 'global', key: 'k', value: 'c', expected_version: 1 });
+  assert.equal(stale.code, 'version_conflict');
+  assert.equal(stale.current_version, 2);
+  assert.equal(readOnly(dir).entry.value, 'b');
+
+  // A key that does not exist is at version 0.
+  const missing = await store.write({ scope: 'global', key: 'nope', value: 'x', expected_version: 3 });
+  assert.equal(missing.current_version, 0);
+  assert.match(missing.error, /the memory does not exist/);
+  // An archived record is not live, so it is absent too.
+  await store.archive({ scope: 'global', key: 'k' });
+  assert.equal((await store.write({ scope: 'global', key: 'k', value: 'new', expected_version: 0 })).entry.version, 1);
+  // Malformed values are refused.
+  for (const bad of [-1, 1.5, '2']) {
+    const r = await store.write({ scope: 'global', key: 'z', value: 'x', expected_version: bad });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /expected_version must be a non-negative integer/);
+  }
+});
+
+test('superseded_by: read and readMany name the live records that supersede this one', async () => {
+  const store = createLocalStore(tmp('lk-ver-sby-'));
+  const old = (await store.write({ scope: 'global', key: 'old', value: 'v' })).entry;
+  // No successor: the field is omitted.
+  assert.equal('superseded_by' in (await store.read({ scope: 'global', key: 'old' })).entry, false);
+  const a = (await store.write({ scope: 'repo::o/r', key: 'new-a', value: 'v', supersedes: old.id })).entry;
+  await new Promise((r) => setTimeout(r, 5));
+  const b = (await store.write({ scope: 'global', key: 'new-b', value: 'v', supersedes: old.id })).entry;
+  const read = (await store.read({ scope: 'global', key: 'old' })).entry;
+  assert.deepEqual(read.superseded_by, [b.id, a.id], 'newest first');
+  assert.deepEqual((await store.read({ key: 'old' })).entry.superseded_by, [b.id, a.id]);
+  const many = await store.readMany([{ scope: 'global', key: 'old' }, { scope: 'global', key: 'new-b' }]);
+  assert.deepEqual(many.entries[0].superseded_by, [b.id, a.id]);
+  assert.equal('superseded_by' in many.entries[1], false);
+  // An archived successor no longer counts.
+  await store.archive({ scope: 'repo::o/r', key: 'new-a' });
+  assert.deepEqual((await store.read({ scope: 'global', key: 'old' })).entry.superseded_by, [b.id]);
+});
+
+test('write flags: --expected-version guards the write and a conflict exits non-zero', () => {
+  const root = tmp('lk-ver-cli-root-');
+  const home = tmp('lk-ver-cli-home-');
+  const env = cliEnv(home);
+  const run = (...extra) => spawnSync(process.execPath, [
+    BIN, 'write', 'global::cas', ...extra, '--local', '--no-origin', '--dir', root,
+  ], { encoding: 'utf8', env });
+
+  const first = run('one', '--expected-version', '0', '--json');
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(JSON.parse(first.stdout).version, 1);
+
+  const conflict = run('two', '--expected-version', '0');
+  assert.equal(conflict.status, 1);
+  assert.match(conflict.stderr, /version conflict — global::cas is at version 1, not 0\. Nothing was written\./);
+
+  const ok = run('two', '--expected-version', '1', '--json');
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(JSON.parse(ok.stdout).version, 2);
+
+  for (const bad of [['--expected-version'], ['--expected-version', '1.5'], ['--expected-version', 'x']]) {
+    const res = run('three', ...bad);
+    assert.equal(res.status, 1, `${bad.join(' ')} must fail`);
+    assert.match(res.stderr, /--expected-version must be a non-negative integer/);
+  }
+
+  const show = spawnSync(process.execPath, [BIN, 'show', 'global::cas', '--local', '--json', '--dir', root], { encoding: 'utf8', env });
+  assert.equal(show.status, 0, show.stderr);
+  assert.equal(JSON.parse(show.stdout).offline.record.version, 2);
+});

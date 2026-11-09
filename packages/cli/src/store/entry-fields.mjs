@@ -77,3 +77,18 @@ export function withReadFields(row) {
     updatedAt: updatedAtOf(row),
   };
 }
+
+/**
+ * The record's version (migration 00120): an integer that starts at 1 and
+ * goes up by one on every content change.
+ *
+ * A row that does not carry a usable version is reported as `1`, not `0` or
+ * null: a local file written before the column existed is still a record that
+ * has been written once, which is exactly what version 1 means on the server
+ * (the column's backfill default). Total, like everything here.
+ */
+export function versionOf(row) {
+  const raw = row?.version;
+  const n = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : raw;
+  return Number.isInteger(n) && n >= 1 ? n : 1;
+}

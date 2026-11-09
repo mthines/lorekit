@@ -94,6 +94,13 @@ export function normalizeEntry(e = {}) {
     origin_repo: e.origin_repo ?? null,
     origin_branch: e.origin_branch ?? null,
     origin_pr: e.origin_pr ?? null,
+    // The record's version (00120). Null when the store did not report one —
+    // a remote deployed before the column, never a local read, which resolves
+    // an absent version to 1.
+    version: Number.isInteger(e.version) ? e.version : null,
+    // The ids of the records that supersede this one, newest first. Computed on
+    // read and carried only when non-empty, as both stores report it.
+    ...(Array.isArray(e.superseded_by) && e.superseded_by.length ? { superseded_by: e.superseded_by } : {}),
   };
 }
 

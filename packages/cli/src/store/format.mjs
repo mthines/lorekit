@@ -52,6 +52,11 @@ export const FIELDS = [
   'attributes',
   'content_type',
   'supersedes',
+  // Version (migration 00120): starts at 1 and goes up by one on every content
+  // change — value, content_type, attributes, tags, or a new supersedes link —
+  // mirroring the hosted `memories_bump_version` trigger. Appended like the
+  // columns above: a file written before it existed reads as version 1.
+  'version',
 ];
 
 // The content types a record may declare; the first is what null means. The

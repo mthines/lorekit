@@ -467,7 +467,15 @@ export async function restFetch(baseUrl, token, path, { method = 'GET', body, ti
         // but this is read on every failure so a future 503 needs no change
         // here. Additive: existing callers ignore the extra key.
         retryAfter: retryAfterFrom(data, res.headers),
-        error: data?.error ? { message: data.error, code: data.code } : { code: res.status, message: text.slice(0, 200) || res.statusText },
+        // `current_version` rides along on a `version_conflict` 409 (00120) so a
+        // caller can say what the stored version is without a second read.
+        error: data?.error
+          ? {
+              message: data.error,
+              code: data.code,
+              ...(Number.isInteger(data.current_version) ? { current_version: data.current_version } : {}),
+            }
+          : { code: res.status, message: text.slice(0, 200) || res.statusText },
       };
     }
     return { ok: true, httpStatus: res.status, data, userId };

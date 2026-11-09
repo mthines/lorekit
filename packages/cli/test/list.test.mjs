@@ -64,6 +64,7 @@ test('normalizeEntry maps updated_at → updated and coerces value/tags', () => 
     origin_repo: null,
     origin_branch: null,
     origin_pr: null,
+    version: null,
   });
   // A row without taxonomy columns normalizes them to null.
   assert.deepEqual(
