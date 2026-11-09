@@ -25857,12 +25857,25 @@ begin
   -- race the lock cannot: two writers that both expected 0 and both found no
   -- row. The second one's insert lands on the first one's row, the `where` is
   -- false, nothing is written, and it gets the same conflict.
+  --
+  -- EXPIRED counts as absent. Every read hides a row whose `expires_at` has
+  -- passed, so a caller that read the key saw nothing: its version is 0 here
+  -- and in the `where` guards, the same liveness the reads use. The expired
+  -- row is still the conflict target (the unique indexes are partial on
+  -- `archived_at` only), so the write UPDATES it in place, and its version
+  -- CONTINUES counting from the expired row's (+1 on a content change) rather
+  -- than restarting at 1: the row keeps its id, created_at and seen_count, so
+  -- it is the same record coming back, and restarting would need the bump
+  -- trigger to second-guess liveness on every update. A caller therefore
+  -- expects 0 and may read back a version above 1.
   if p_expected_version is not null then
     if p_expected_version < 0 then
       raise exception using errcode = '22023',
         message = format('expected_version must be >= 0, got %s', p_expected_version);
     end if;
-    select m.version into v_current_version
+    select case when m.expires_at is not null and m.expires_at <= now() then 0
+                else m.version end
+      into v_current_version
       from memories m
      where m.scope = p_scope
        and m.key = p_key
@@ -25920,7 +25933,9 @@ begin
                         when 'set'   then v_expires_at
                         else memories.expires_at
                       end
-    where p_expected_version is null or memories.version = p_expected_version  -- 00120
+    where p_expected_version is null  -- 00120: the same expired-is-0 rule as the gate
+       or p_expected_version = case when memories.expires_at is not null and memories.expires_at <= now()
+                                    then 0 else memories.version end
     returning
       memories.id, memories.created_at, (xmax::text = '0') as inserted,
       true as org_routed, v_binding_slug as binding_org_slug, memories.expires_at,
@@ -25969,7 +25984,9 @@ begin
                         when 'set'   then v_expires_at
                         else memories.expires_at
                       end
-    where p_expected_version is null or memories.version = p_expected_version  -- 00120
+    where p_expected_version is null  -- 00120: the same expired-is-0 rule as the gate
+       or p_expected_version = case when memories.expires_at is not null and memories.expires_at <= now()
+                                    then 0 else memories.version end
     returning
       memories.id, memories.created_at, (xmax::text = '0') as inserted,
       false as org_routed, v_binding_slug as binding_org_slug, memories.expires_at,
@@ -26019,7 +26036,9 @@ begin
                         when 'set'   then v_expires_at
                         else memories.expires_at
                       end
-    where p_expected_version is null or memories.version = p_expected_version  -- 00120
+    where p_expected_version is null  -- 00120: the same expired-is-0 rule as the gate
+       or p_expected_version = case when memories.expires_at is not null and memories.expires_at <= now()
+                                    then 0 else memories.version end
     returning
       memories.id, memories.created_at, (xmax::text = '0') as inserted,
       false as org_routed, v_binding_slug as binding_org_slug, memories.expires_at,
@@ -26035,7 +26054,9 @@ begin
   -- writer moved the version after the gate, or created the row a 0 expected
   -- to be absent). Nothing was written; report the version that won.
   if p_expected_version is not null and not found then
-    select m.version into v_current_version
+    select case when m.expires_at is not null and m.expires_at <= now() then 0
+                else m.version end
+      into v_current_version
       from memories m
      where m.scope = p_scope
        and m.key = p_key

@@ -444,7 +444,8 @@ before the field existed reads as version `1`. `write` reports the new version (
 `--json`), and `show` and `list --json` include it.
 
 - `--expected-version <n>` — write only if the memory is still at version `n`; `0` means it must
-  not exist yet (an archived record counts as absent). On a mismatch nothing is written and the
+  not exist yet (an archived or expired record counts as absent, as it does for reads; an expired
+  record rewritten this way keeps counting from its old version). On a mismatch nothing is written and the
   command exits `1` naming the stored version:
   `version conflict — global::k is at version 4, not 3. Nothing was written.` Works against both
   stores; remotely the check is atomic in the `memory_write` RPC (`409 version_conflict`).

@@ -294,6 +294,31 @@ test('expected_version: a match writes, a mismatch refuses and writes nothing', 
   }
 });
 
+test('expected_version: an expired record counts as absent, as it does for reads', async () => {
+  const dir = tmp('lk-ver-exp-');
+  const store = createLocalStore(dir);
+  await store.write({ scope: 'global', key: 'k', value: 'one' });
+  await store.write({ scope: 'global', key: 'k', value: 'two' });
+  // Expire it on disk: every read now hides it.
+  const { file } = readOnly(dir);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8')
+    .replace(/^expires_at: .*\n/m, '')
+    .replace(/^version: /m, `expires_at: ${new Date(Date.now() - 60_000).toISOString()}\nversion: `));
+  assert.equal((await store.read({ scope: 'global', key: 'k' })).entry, null);
+  // The version it last had is refused — a reader sees nothing, version 0 …
+  const stale = await store.write({ scope: 'global', key: 'k', value: 'x', expected_version: 2 });
+  assert.equal(stale.code, 'version_conflict');
+  assert.equal(stale.current_version, 0);
+  // … and 0 lands. The same record is rewritten in place and, as on the
+  // server, its version continues counting rather than restarting at 1.
+  const ok = await store.write({ scope: 'global', key: 'k', value: 'three', expected_version: 0, clear_ttl: true });
+  assert.equal(ok.ok, true, ok.error);
+  assert.equal(ok.entry.version, 3);
+  assert.equal(readOnly(dir).entry.value, 'three');
+  // Live again, so 0 now conflicts at its version.
+  assert.equal((await store.write({ scope: 'global', key: 'k', value: 'y', expected_version: 0 })).current_version, 3);
+});
+
 test('expected_version: two tiers check against the record a read resolves, and continue its version', async () => {
   const home = tmp('lk-ver-2t-home-');
   const project = path.join(tmp('lk-ver-2t-proj-'), '.lorekit');

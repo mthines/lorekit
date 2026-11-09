@@ -12205,6 +12205,36 @@ begin
   end;
   assert v_err = '22023', format('120 AC-2j: a negative expected_version must be rejected, got %L', v_err);
 
+  -- an EXPIRED row is not read, so it counts as absent (version 0) — the same
+  -- liveness the reads use. The write updates that row in place and its
+  -- version continues counting (not a restart at 1).
+  perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp', p_value => 'one');
+  perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp', p_value => 'two');
+  update memories set expires_at = now() - interval '1 minute' where key = '120-exp' and user_id = v_me;
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp',
+      p_value => 'x', p_expected_version => 2);
+    v_err := null;
+  exception when others then v_err := sqlstate || ' ' || sqlerrm;
+  end;
+  assert v_err = 'LK003 version_conflict: expected_version=2 current_version=0',
+    format('120 AC-2k: an expired row must read as version 0 to the gate, got %L', v_err);
+  select version, value into v_v, v_val from memory_write(p_user_id => v_me, p_scope => 'global',
+    p_key => '120-exp', p_value => 'three', p_expected_version => 0, p_clear_ttl => true);
+  assert v_v = 3 and v_val = 'three',
+    format('120 AC-2l: expected 0 on an expired key must write and continue the version, got %s %L', v_v, v_val);
+  assert (select count(*) = 1 from memories where key = '120-exp' and user_id = v_me),
+    '120 AC-2m: the expired row must be updated in place, not duplicated';
+  -- revived (TTL cleared), it is live again: 0 now conflicts at its version
+  begin
+    perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp',
+      p_value => 'y', p_expected_version => 0);
+    v_err := null;
+  exception when others then v_err := sqlstate || ' ' || sqlerrm;
+  end;
+  assert v_err = 'LK003 version_conflict: expected_version=0 current_version=3',
+    format('120 AC-2n: a live row must conflict against expected 0, got %L', v_err);
+
   -- ── lorekit_memory_list returns version ─────────────────────────────────
   set local role service_role;
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);

@@ -207,11 +207,13 @@ class LocalStore {
     // none (a home record seen through an active project tier).
     const visible = _resolved !== undefined
       ? _resolved
-      : live;
+      : (live && isLive(live) ? live : null);
     // Optimistic concurrency (00120), the local twin of the hosted check in
     // `memory_write`: the write lands only when the record is still at the
-    // version the caller last read, and `0` means "must not exist yet". An
-    // archived record is not live, so like the server it counts as absent.
+    // version the caller last read, and `0` means "must not exist yet". The
+    // check is against the record a read resolves, so it uses the same
+    // liveness reads do: an archived OR expired record is not read, so like
+    // the server it counts as absent (version 0).
     // Omitted → no check, exactly as before.
     if (expected_version != null) {
       if (!Number.isInteger(expected_version) || expected_version < 0) {
@@ -292,6 +294,10 @@ class LocalStore {
       // Version (00120), bumped under the hosted trigger's rule: only a change
       // a reader can see counts. A first write — or a revive of an archived
       // key, which the server inserts as a fresh row — starts at 1.
+      //
+      // An EXPIRED copy here still counts on (it is the same record, as the
+      // server updates the expired row in place and its trigger continues
+      // the count) even though the expected_version check above saw it as 0.
       //
       // With no copy in this tier, the count continues from the record the
       // two-tier read resolved: this write's copy will SHADOW that one (the
