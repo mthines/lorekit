@@ -12,6 +12,7 @@ import { MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 import { recordMemoryReads } from '../../_shared/telemetry/memory-reads.ts';
 import { CLIENT_HEADER } from '../../_shared/api/router.ts';
 import { parseUsageClient } from '../../_shared/telemetry/usage-stats.ts';
+import { NOT_EXPIRED } from '../../_shared/memory/live.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -30,7 +31,7 @@ export async function handleGet(
     .select(MEMORY_SELECT)
     .eq('id', v.data)
     .is('archived_at', null)
-    .or('expires_at.is.null,expires_at.gt.now()');
+    .or(NOT_EXPIRED);
 
   // api_key auth uses service-role client (bypasses RLS) — apply tenant filter.
   // JWT auth uses RLS-scoped client — RLS handles visibility automatically.

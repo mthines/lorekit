@@ -10,6 +10,7 @@ import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import { UpdateMemoryBodySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/db/database.types.ts';
+import { NOT_EXPIRED } from '../../_shared/memory/live.ts';
 import {
   parseExpectedVersion,
   RecordFieldError,
@@ -66,13 +67,16 @@ export async function handleUpdate(
   }
 
   const tracedDb = createTracedClient(db, span);
-  // The row this caller may patch: live, its own (api_key — the service-role
-  // client bypasses RLS) or RLS-visible (JWT, org-owned rows included), and
-  // inside the key's allowlist (`user_id` alone let a scoped key patch a memory
-  // outside its allowlist by id). One definition, used by the update and by
-  // the version-conflict lookup below, so the two cannot disagree on "which row".
+  // The row this caller may patch: live (unarchived AND unexpired — the same
+  // predicate as GET /:id, so PATCH cannot edit a row GET 404s on, and an
+  // expired row's version never reaches the 409 path: it is absent, as in
+  // memory_write), its own (api_key — the service-role client bypasses RLS) or
+  // RLS-visible (JWT, org-owned rows included), and inside the key's allowlist
+  // (`user_id` alone let a scoped key patch a memory outside its allowlist by
+  // id). One definition, used by the update and by the version-conflict lookup
+  // below, so the two cannot disagree on "which row".
   const target = <Q extends TracedQuery<MemoryRow>>(query: Q): Q => {
-    let q = query.eq('id', idV.data).is('archived_at', null) as Q;
+    let q = query.eq('id', idV.data).is('archived_at', null).or(NOT_EXPIRED) as Q;
     if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId) as Q;
     return applyKeyScopeFilter(q, auth);
   };
