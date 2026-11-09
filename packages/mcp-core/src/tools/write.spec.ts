@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { write } from './write.js';
 import { LimitError, MEMORY_CAP_SQLSTATE } from '../limits/limits.js';
+import { RecordFieldError, VersionConflictError } from '../provenance/record-extensions.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 vi.mock('../telemetry.js', () => ({
@@ -13,10 +14,10 @@ vi.mock('../telemetry.js', () => ({
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-const fakeResult = { id: 'uuid-1', created_at: '2026-01-01T00:00:00Z' };
+const fakeResult = { id: 'uuid-1', created_at: '2026-01-01T00:00:00Z', version: 1 };
 
 function makeDb(
-  data: null | { id: string; created_at: string; inserted?: boolean },
+  data: null | { id: string; created_at: string; inserted?: boolean; version?: number },
   error: null | { message: string; code?: string } = null,
 ) {
   return {
@@ -390,5 +391,35 @@ describe('write — origin', () => {
       write(db, { scope: 'global', key: 'k', value: 'v', origin_repo: 'not-a-repo' }),
     ).rejects.toThrow(/origin_repo/);
     expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  // ── expected_version (00120) ───────────────────────────────────────────────
+
+  it('omits p_expected_version when expected_version is not given, so the write is unchecked', async () => {
+    const db = makeDb(fakeResult);
+    await write(db, { scope: 'global', key: 'k', value: 'v' });
+    const args = (db.rpc as ReturnType<typeof vi.fn>).mock.calls[0][1] as Record<string, unknown>;
+    expect(args).not.toHaveProperty('p_expected_version');
+  });
+
+  it('forwards expected_version (0 included) to the RPC', async () => {
+    for (const n of [0, 4]) {
+      const db = makeDb(fakeResult);
+      await write(db, { scope: 'global', key: 'k', value: 'v', expected_version: n });
+      expect(db.rpc).toHaveBeenCalledWith('memory_write', expect.objectContaining({ p_expected_version: n }));
+    }
+  });
+
+  it('rejects a malformed expected_version before touching the DB', async () => {
+    const db = makeDb(fakeResult);
+    await expect(write(db, { scope: 'global', key: 'k', value: 'v', expected_version: -1 })).rejects.toThrow(RecordFieldError);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it('turns the RPC version refusal into a VersionConflictError naming the stored version', async () => {
+    const db = makeDb(null, { code: 'LK003', message: 'version_conflict: expected_version=1 current_version=3' });
+    const err = await write(db, { scope: 'global', key: 'k', value: 'v', expected_version: 1 }).catch((e) => e);
+    expect(err).toBeInstanceOf(VersionConflictError);
+    expect((err as VersionConflictError).currentVersion).toBe(3);
   });
 });

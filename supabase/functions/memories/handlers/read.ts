@@ -5,7 +5,8 @@ import { createTracedClient } from '../../_shared/telemetry/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/db/database.types.ts';
-import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
+import { getMemberOrgIds, applyRestTenantScope, restSupersededBy } from '../../_shared/api/tenant.ts';
+import { withSupersededBy } from '../../_shared/provenance/record-extensions.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { MEMORY_SELECT, shapeMemoryRow, ReadMemoriesBodySchema } from '../../_shared/schemas/memory.ts';
 import { parseMemoryRefs } from '../../_shared/scope/scope.ts';
@@ -102,9 +103,11 @@ export async function handleRead(
     'lorekit.result.count': rows.length,
     'lorekit.refs.missing': missing.length,
   });
+  // `superseded_by` (00120): ONE query for the whole batch, same visibility.
+  const links = await restSupersededBy(db, auth, span, rows.map((r) => r.id), orgIds);
   const res = ok(
     {
-      entries: rows.map((r) => shapeMemoryRow(r as Record<string, unknown>)),
+      entries: rows.map((r) => withSupersededBy(shapeMemoryRow(r as Record<string, unknown>), links)),
       missing,
     },
     cors,

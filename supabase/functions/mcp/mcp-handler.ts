@@ -12,7 +12,7 @@ import { OrgPermissionError, UnknownOrgError } from './org-permissions.ts';
 import { TtlError } from './ttl.ts';
 import { CreatedAtError } from '../_shared/limits/created-at.ts';
 import { OriginError } from '../_shared/provenance/origin.ts';
-import { RecordFieldError } from '../_shared/provenance/record-extensions.ts';
+import { RecordFieldError, VersionConflictError } from '../_shared/provenance/record-extensions.ts';
 import { type Params } from './tools.ts';
 // The dispatch maps are GENERATED from packages/schemas/src/shared/tool-catalog.ts —
 // see tool-dispatch.generated.ts. They were hand-written here, which is why a
@@ -519,6 +519,9 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         || err instanceof CreatedAtError
         || err instanceof OriginError
         || err instanceof RecordFieldError
+        // A stale `expected_version` (00120): the caller re-reads and retries,
+        // so the model must SEE it — an in-band isError naming the stored version.
+        || err instanceof VersionConflictError
         || err instanceof LimitError;
       if (isClientError || isKeyScopeDenied) {
         toolSpan.clientError(msg).end();

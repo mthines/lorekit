@@ -82,6 +82,12 @@ export const MemoryWriteSchema = z.object({
   attributes: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
   content_type: z.string().optional(),
   supersedes: z.string().optional(),
+  // Optimistic concurrency (00120): the `version` the caller last read. A write
+  // whose expected_version is not the stored version is refused with
+  // `version_conflict` and changes nothing; 0 means "the key must not exist
+  // yet". Omitted = unchecked, exactly as before. The shared
+  // `parseExpectedVersion` owns the rule; this only admits the wire type.
+  expected_version: z.number().optional(),
 });
 export type MemoryWrite = z.infer<typeof MemoryWriteSchema>;
 
@@ -933,6 +939,10 @@ export type ReadActivityResponse = z.infer<typeof ReadActivityResponseSchema>;
  * omitted for the origin fields' reason: each has write-path validation (a
  * merge, a JSON body check, a visibility check on the target) that lives in
  * `memory_write`, and a column patch would bypass it. Set them with a write.
+ *
+ * `expected_version` (00120) STAYS: the handler turns it into a predicate on
+ * the update itself (`version = n`), so the check and the write are one
+ * statement. It is not a column and is stripped from the patch.
  */
 export const UpdateMemoryBodySchema = MemoryWriteSchema
   .omit({
@@ -982,6 +992,13 @@ export const MemoryEntrySchema = z.object({
   attributes: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
   content_type: z.string().optional(),
   supersedes: z.string().uuid().nullable().optional(),
+  // The record's content version (00120): 1 on create, +1 on every change to
+  // value, content_type, attributes, tags or supersedes. What `expected_version`
+  // compares against. Optional for a pre-00120 backend, like the fields above.
+  version: z.number().int().min(1).optional(),
+  // Computed on read, never stored (00120): the ids of the live records the
+  // caller can see whose `supersedes` names this one. Omitted when none do.
+  superseded_by: z.array(z.string().uuid()).optional(),
   // Recurrence — how many times this lesson has been written (00059). The
   // column is NOT NULL DEFAULT 1, so a live row always has >= 1; optional here
   // for the same reason kind/host are, so a client reading a response from a
@@ -1051,7 +1068,7 @@ export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
 export const MEMORY_SELECT =
   'id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,'
   + 'origin_repo,origin_branch,origin_commit,origin_pr,kind,host,seen_count,'
-  + 'attributes,content_type,supersedes,'
+  + 'attributes,content_type,supersedes,version,'
   + 'read_count,opened_count,last_read_at,last_opened_at,cited_count,last_cited_at,'
   + 'org_id,created_by,updated_by,orgs(id,name,slug)';
 

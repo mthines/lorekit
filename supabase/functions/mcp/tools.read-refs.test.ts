@@ -59,7 +59,13 @@ type Row = { id: string; scope: string; key: string; value: string; updated_at: 
  * feeds the singular path, as a LIST so the unscoped multi-scope case can be
  * exercised.
  */
-function fakeDb(opts: { rowsByScope?: Map<string, Row[]>; singleRows?: Row[] } = {}) {
+function fakeDb(opts: {
+  rowsByScope?: Map<string, Row[]>;
+  singleRows?: Row[];
+  // The `superseded_by` lookup (00120): `.in('supersedes', ids)`, answered from
+  // this list filtered to the ids asked about.
+  successors?: { id: string; supersedes: string }[];
+} = {}) {
   const order: string[] = [];
   const queries: {
     table: string;
@@ -102,6 +108,11 @@ function fakeDb(opts: { rowsByScope?: Map<string, Row[]>; singleRows?: Row[] } =
         return Promise.resolve()
           .then(() => new Promise((res) => queueMicrotask(() => res(undefined))))
           .then(() => {
+            const supersedesIn = rec.filters.find(([c]) => c === 'supersedes');
+            if (supersedesIn) {
+              const ids = supersedesIn[1] as string[];
+              return { data: (opts.successors ?? []).filter((r) => ids.includes(r.supersedes)), error: null };
+            }
             if (!rec.batch) {
               // The singular path: `scope` may be absent, so the canned rows
               // are filtered by it only when the query actually carried one.
@@ -295,17 +306,56 @@ Deno.test('AC-6: one query per distinct scope, all started before the first reso
     span,
   );
 
-  // 3 distinct scopes, 4 keys total -> exactly 3 query builds, never 4 or 1.
-  assertEquals(queries.length, 3);
-  const byScope = new Map(queries.map((q) => [q.filters.find(([c]) => c === 'scope')?.[1], q]));
+  // 3 distinct scopes, 4 keys total -> exactly 3 read queries, never 4 or 1 —
+  // plus ONE `superseded_by` lookup for the whole batch (00120), never one per row.
+  const reads = queries.filter((q) => q.filters.some(([c]) => c === 'scope'));
+  assertEquals(reads.length, 3);
+  const lookups = queries.filter((q) => q.filters.some(([c]) => c === 'supersedes'));
+  assertEquals(lookups.length, 1);
+  assertEquals(new Set(lookups[0].filters.find(([c]) => c === 'supersedes')?.[1] as string[]), new Set(['1', '2', '3', '4']));
+  const byScope = new Map(reads.map((q) => [q.filters.find(([c]) => c === 'scope')?.[1], q]));
   assertEquals((byScope.get('repo::o/r') as typeof queries[number]).filters.find(([c]) => c === 'key')?.[1], ['b', 'c']);
 
   // All 3 must have STARTED (order recorded at .then()-invocation time) before
   // any of them resolves — the fake's queueMicrotask hop guarantees this by
   // construction (see the module docblock), so this assertion is a genuine
-  // check on the recorded order length, not a tautology.
-  assertEquals(order.length, 3);
-  assertEquals(new Set(order), new Set(['global', 'repo::o/r', 'project::demo']));
+  // check on the recorded order length, not a tautology. The trailing ''
+  // is the `superseded_by` lookup, which runs after the reads it is about.
+  assertEquals(order.length, 4);
+  assertEquals(new Set(order.slice(0, 3)), new Set(['global', 'repo::o/r', 'project::demo']));
+});
+
+Deno.test('00120: superseded_by is attached where a successor exists, and omitted otherwise', async () => {
+  const { span } = newRootSpan();
+  const rowsByScope = new Map<string, Row[]>([
+    ['global', [
+      { id: '1', scope: 'global', key: 'a', value: 'v', updated_at: 't' },
+      { id: '2', scope: 'global', key: 'b', value: 'v', updated_at: 't' },
+    ]],
+  ]);
+  const { db } = fakeDb({ rowsByScope, successors: [{ id: '9', supersedes: '1' }] });
+
+  const result = await toolRead(db, { refs: ['global::a', 'global::b'] }, null, span) as {
+    entries: { id: string; superseded_by?: string[] }[];
+  };
+  const byId = new Map(result.entries.map((e) => [e.id, e]));
+  assertEquals(byId.get('1')?.superseded_by, ['9']);
+  assertEquals('superseded_by' in (byId.get('2') ?? {}), false);
+});
+
+Deno.test('00120: a singular read carries superseded_by, and the lookup carries the tenant filter', async () => {
+  const { span } = newRootSpan();
+  const { db, queries } = fakeDb({
+    singleRows: [{ id: '1', scope: 'global', key: 'a', value: 'v', updated_at: 't' }],
+    successors: [{ id: '9', supersedes: '1' }],
+  });
+
+  const result = await toolRead(db, { key: 'a', scope: 'global' }, 'user-1', span) as { superseded_by?: string[] };
+  assertEquals(result.superseded_by, ['9']);
+  const lookup = queries.find((q) => q.filters.some(([c]) => c === 'supersedes'));
+  // `applyTenantScope` for a user in no org is `.eq('user_id', userId)`.
+  assertEquals(lookup?.filters.some(([c, v]) => c === 'user_id' && v === 'user-1'), true);
+  assertEquals(lookup?.filters.some(([c, v]) => c === 'archived_at' && v === null), true);
 });
 
 Deno.test("AC-7: N found rows record one targeted read for all N ids", async () => {

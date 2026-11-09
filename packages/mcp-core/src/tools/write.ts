@@ -61,6 +61,8 @@ export const WriteInputSchema = z.object({
   attributes: z.record(z.unknown()).optional(),
   content_type: z.string().optional(),
   supersedes: z.string().optional(),
+  // Optimistic concurrency (00120): the version last read; 0 = must not exist.
+  expected_version: z.number().optional(),
 });
 
 export type WriteInput = z.infer<typeof WriteInputSchema>;
@@ -69,7 +71,7 @@ export async function write(
   db: SupabaseClient,
   raw: unknown,
   userId: string | null = null,
-): Promise<{ id: string; created_at: string; expires_at?: string | null }> {
+): Promise<{ id: string; created_at: string; version: number; expires_at?: string | null }> {
   const input = WriteInputSchema.parse(raw);
   const createdAt = parseCreatedAt(input.created_at);
   // parseTtl validates individual bounds and mutual exclusivity. Zod has already
@@ -147,6 +149,8 @@ export async function write(
             p_attributes: record.attributes,
             p_content_type: record.contentType,
             p_supersedes: record.supersedes,
+            // Omitted = unchecked, exactly as before 00120.
+            ...(record.expectedVersion !== null ? { p_expected_version: record.expectedVersion } : {}),
           })
           .single();
 
@@ -157,6 +161,7 @@ export async function write(
           created_at: string;
           inserted?: boolean;
           expires_at?: string | null;
+          version: number;
         };
         await recordAudit(
           db,
@@ -171,9 +176,10 @@ export async function write(
         );
 
         span.setStatus({ code: SpanStatusCode.UNSET });
-        const result: { id: string; created_at: string; expires_at?: string | null } = {
+        const result: { id: string; created_at: string; version: number; expires_at?: string | null } = {
           id: row.id,
           created_at: row.created_at,
+          version: row.version,
         };
         // Only include expires_at in the response when it was explicitly requested
         // (i.e. a TTL was supplied) — omitting it keeps the response stable for

@@ -27,6 +27,7 @@ import {
   restrictsTenancy,
   type KeyRestriction,
 } from '../auth/tenant-scope.ts';
+import { fetchSupersededBy } from '../memory/superseded-by.ts';
 
 /**
  * Resolve the org IDs the user is a member of via the single-source RPC.
@@ -240,4 +241,26 @@ export async function hasOrgCapability(
   const granted = (data as unknown) === true;
   span.setAttributes({ 'lorekit.org.capability': capability, 'lorekit.org.capability_granted': granted }).end();
   return granted;
+}
+
+/**
+ * `superseded_by` (00120) for a REST read page: one query over the page's ids,
+ * under the SAME visibility the read itself used — `applyRestTenantScope` for an
+ * api_key caller, RLS for a JWT caller (the client is already user-scoped), and
+ * nothing for the service tier. Pass `orgIds` when the handler already resolved
+ * them; otherwise they are resolved here, and only when the page has rows.
+ */
+export async function restSupersededBy(
+  db: DbClient,
+  auth: AuthContext,
+  span: Span,
+  ids: ReadonlyArray<string | undefined | null>,
+  orgIds?: string[],
+): Promise<Map<string, string[]>> {
+  if (!ids.some((id) => typeof id === 'string' && id.length > 0)) return new Map();
+  const tracedDb = createTracedClient(db, span);
+  if (auth.type !== 'api_key' || !auth.userId) return fetchSupersededBy(tracedDb, ids, (q) => q);
+  const userId = auth.userId;
+  const visible = orgIds ?? await getMemberOrgIds(db, userId, span);
+  return fetchSupersededBy(tracedDb, ids, (q) => applyRestTenantScope(q, userId, visible, keyRestriction(auth)));
 }

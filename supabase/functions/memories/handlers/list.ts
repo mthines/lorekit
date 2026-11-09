@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
-import { firstDeniedScope } from '../../_shared/api/tenant.ts';
+import { firstDeniedScope, restSupersededBy } from '../../_shared/api/tenant.ts';
+import { withSupersededBy } from '../../_shared/provenance/record-extensions.ts';
 import { badRequest, forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateOptionalBody, validateQuery } from '../../_shared/api/validate.ts';
 import { parseScopeFilter } from '../../_shared/scope/scope.ts';
@@ -295,7 +296,11 @@ async function respondWithPage(
   });
   // Let the router record the RECORD count (not just the call) — see
   // RESULT_COUNT_HEADER in _shared/api/router.ts.
-  const res = ok({ ...page, entries: page.entries.map(shapeRpcRow), total }, cors);
+  // `superseded_by` (00120): one query over the page, under the same
+  // visibility. The list's own filters and `total` are unchanged — a superseded
+  // record still appears, it is only marked.
+  const links = await restSupersededBy(db, auth, span, page.entries.map((e) => e.id));
+  const res = ok({ ...page, entries: page.entries.map((e) => withSupersededBy(shapeRpcRow(e), links)), total }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
   // memory.list is a BULK read (every row a listing call returned) for the
   // per-memory counter (migration 00077) — one statement for the whole page —

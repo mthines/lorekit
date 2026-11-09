@@ -2,7 +2,7 @@ import { applyKeyScopeFilter } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit/audit.ts';
-import { ok, notFound, badRequest, dryRun } from '../../_shared/api/respond.ts';
+import { ok, notFound, badRequest, dryRun, versionConflict } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/limits/dry-run.ts';
 import { validateUuid, validateBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/telemetry/otel.ts';
@@ -10,7 +10,12 @@ import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import { UpdateMemoryBodySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/db/database.types.ts';
-import { RecordFieldError, translateRecordFieldDbError } from '../../_shared/provenance/record-extensions.ts';
+import {
+  parseExpectedVersion,
+  RecordFieldError,
+  translateRecordFieldDbError,
+  VersionConflictError,
+} from '../../_shared/provenance/record-extensions.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -33,9 +38,19 @@ export async function handleUpdate(
   // set (mirroring memory_write's p_clear_ttl precedence, 00031), and the
   // deadline is computed from the request clock rather than the database's,
   // which is accurate to within clock skew and keeps this a plain column patch.
-  const { ttl_days: ttlDays, clear_ttl: clearTtl, ...columns } = bodyV.data as Record<string, unknown> & {
-    ttl_days?: number; clear_ttl?: boolean;
+  const { ttl_days: ttlDays, clear_ttl: clearTtl, expected_version: rawExpected, ...columns } = bodyV.data as Record<string, unknown> & {
+    ttl_days?: number; clear_ttl?: boolean; expected_version?: unknown;
   };
+  // `expected_version` (00120) is not a column either: it becomes a predicate
+  // on the UPDATE itself, so the check and the write are one statement.
+  let expectedVersion: number | null;
+  try {
+    expectedVersion = parseExpectedVersion(rawExpected);
+  } catch (err) {
+    if (err instanceof RecordFieldError) return badRequest(err.message, undefined, cors);
+    throw err;
+  }
+  if (expectedVersion !== null) span.setAttributes({ 'lorekit.expected_version': expectedVersion });
 
   const patch: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(columns)) { if (v !== undefined) patch[k] = v; }
@@ -51,13 +66,18 @@ export async function handleUpdate(
   }
 
   const tracedDb = createTracedClient(db, span);
-  let q: TracedQuery<MemoryRow> = tracedDb.from('memories').update(patch).eq('id', idV.data).is('archived_at', null);
-  // api_key auth uses service-role client — restrict to caller's own rows.
-  // JWT auth uses RLS-scoped client — RLS handles access control (org-owned rows included).
-  if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
-  // The allowlist half. `user_id` alone let a scoped key patch a memory outside
-  // its allowlist by id.
-  q = applyKeyScopeFilter(q, auth);
+  // The row this caller may patch: live, its own (api_key — the service-role
+  // client bypasses RLS) or RLS-visible (JWT, org-owned rows included), and
+  // inside the key's allowlist (`user_id` alone let a scoped key patch a memory
+  // outside its allowlist by id). One definition, used by the update and by
+  // the version-conflict lookup below, so the two cannot disagree on "which row".
+  const target = <Q extends TracedQuery<MemoryRow>>(query: Q): Q => {
+    let q = query.eq('id', idV.data).is('archived_at', null) as Q;
+    if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId) as Q;
+    return applyKeyScopeFilter(q, auth);
+  };
+  let q: TracedQuery<MemoryRow> = target(tracedDb.from('memories').update(patch));
+  if (expectedVersion !== null) q = q.eq('version', expectedVersion);
 
   // Dry-run: everything above validated + authorized; stop before any write.
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
@@ -77,7 +97,22 @@ export async function handleUpdate(
   // Audit only when the update actually matched a row — the REST analogue of
   // the MCP tools' `if (archived)` / `if (deleted)` guards. A 404 changed
   // nothing and must not leave an audit trail claiming otherwise.
-  if (!data) return notFound('Memory', cors);
+  if (!data) {
+    // With an expected_version, no row means either "no such memory" or "it
+    // moved on". Tell them apart under the SAME visibility as the update, so a
+    // 409 never reveals a row the caller could not have patched.
+    if (expectedVersion !== null) {
+      const { data: current, error: currentError } = await target(
+        tracedDb.from('memories').select('version'),
+      ).maybeSingle();
+      if (currentError) { span.error(`DB: ${currentError.message}`); throw currentError; }
+      const currentVersion = (current as { version?: number } | null)?.version;
+      if (typeof currentVersion === 'number') {
+        return versionConflict(new VersionConflictError(expectedVersion, currentVersion), cors);
+      }
+    }
+    return notFound('Memory', cors);
+  }
 
   const updated = data as unknown as { id: string; scope: string; key: string };
   await recordAudit(

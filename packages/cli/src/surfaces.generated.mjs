@@ -173,6 +173,11 @@ export const MCP_TOOL_DEFS = [
         "supersedes": {
           "type": "string",
           "description": "The id of the memory this one replaces (from `memory.read`). Must name a memory this token can read that has the same owner as the one being written (personal to personal, or the same org); anything else is rejected as not found. Kept on update unless re-supplied."
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optimistic concurrency: the `version` you last read. If the stored version differs, the write is rejected with `version_conflict` (naming the current version) and nothing changes. `0` means the memory must not exist yet. Omit for an unconditional write."
         }
       }
     },
