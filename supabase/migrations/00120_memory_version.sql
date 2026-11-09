@@ -47,17 +47,18 @@ alter table memories
   add column if not exists version integer not null default 1;
 
 -- The CHECK is added NOT VALID — a catalog-only change, no scan of existing
--- rows under the ACCESS EXCLUSIVE lock — and validated in its own statement
--- below, which scans under SHARE UPDATE EXCLUSIVE (reads and writes proceed).
--- New and updated rows are checked from the moment it is added. Validation
--- cannot fail: every existing row reads `version` = 1 from the default.
+-- rows under the ACCESS EXCLUSIVE lock. New and updated rows are checked from
+-- the moment it is added. It is VALIDATED in 00121, not here: a migration file
+-- runs in ONE transaction, so a `validate constraint` in this file would scan
+-- while this transaction still holds the ACCESS EXCLUSIVE lock `add column`
+-- took (a lock is held to the end of its transaction; validate's own weaker
+-- SHARE UPDATE EXCLUSIVE does not release it). Validation cannot fail: every
+-- existing row reads `version` = 1 from the default.
 alter table memories drop constraint if exists memories_version_positive;
 alter table memories add constraint memories_version_positive
   check (version >= 1) not valid;
 
 reset lock_timeout;
-
-alter table memories validate constraint memories_version_positive;
 
 comment on column memories.version is
   'Starts at 1 and increases by 1 on every content change (value, content_type, attributes, tags, or a supersedes link set or changed). Maintained by the memories_bump_version trigger; a caller cannot set it.';
