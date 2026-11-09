@@ -12239,6 +12239,29 @@ begin
   assert v_err = 'LK003 version_conflict: expected_version=0 current_version=3',
     format('120 AC-2n: a live row must conflict against expected 0, got %L', v_err);
 
+  -- an expired row revived by an expected_version write that names NO TTL
+  -- must come back live: keeping its past expires_at would leave it hidden
+  -- and purgeable. Its TTL is cleared, as a fresh insert without one gets.
+  perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp2', p_value => 'one');
+  update memories set expires_at = now() - interval '1 minute' where key = '120-exp2' and user_id = v_me;
+  select version, value into v_v, v_val from memory_write(p_user_id => v_me, p_scope => 'global',
+    p_key => '120-exp2', p_value => 'two', p_expected_version => 0);
+  assert v_v = 2 and v_val = 'two',
+    format('120 AC-2o: expected 0 on an expired key without a TTL must write, got %s %L', v_v, v_val);
+  assert (select expires_at is null from memories where key = '120-exp2' and user_id = v_me),
+    '120 AC-2o: a revived expired row with no TTL named must have its expires_at cleared';
+  -- an explicit TTL on the revive is honoured, not cleared
+  update memories set expires_at = now() - interval '1 minute' where key = '120-exp2' and user_id = v_me;
+  perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp2',
+    p_value => 'three', p_expected_version => 0, p_ttl_seconds => 3600);
+  assert (select expires_at = now() + interval '1 hour' from memories where key = '120-exp2' and user_id = v_me),
+    '120 AC-2p: a revive that names a TTL must keep that TTL';
+  -- scope of the fix: a write with no expected_version keeps the past TTL as before
+  update memories set expires_at = now() - interval '1 minute' where key = '120-exp2' and user_id = v_me;
+  perform memory_write(p_user_id => v_me, p_scope => 'global', p_key => '120-exp2', p_value => 'four');
+  assert (select expires_at < now() from memories where key = '120-exp2' and user_id = v_me),
+    '120 AC-2q: a plain write without expected_version must keep expires_at unchanged';
+
   -- ── lorekit_memory_list returns version ─────────────────────────────────
   set local role service_role;
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);

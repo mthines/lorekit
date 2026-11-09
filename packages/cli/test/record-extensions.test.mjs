@@ -319,6 +319,33 @@ test('expected_version: an expired record counts as absent, as it does for reads
   assert.equal((await store.write({ scope: 'global', key: 'k', value: 'y', expected_version: 0 })).current_version, 3);
 });
 
+test('expected_version: reviving an expired record with no TTL named makes it live again', async () => {
+  const dir = tmp('lk-ver-exp-ttl-');
+  const store = createLocalStore(dir);
+  const expire = () => {
+    const { file } = readOnly(dir);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8')
+      .replace(/^expires_at: .*\n/m, '')
+      .replace(/^version: /m, `expires_at: ${new Date(Date.now() - 60_000).toISOString()}\nversion: `));
+  };
+  await store.write({ scope: 'global', key: 'k', value: 'one' });
+  expire();
+  // No ttl_days, no clear_ttl: keeping the past expires_at would leave the
+  // write hidden (and purgeable). It is cleared, as a fresh record gets.
+  const ok = await store.write({ scope: 'global', key: 'k', value: 'two', expected_version: 0 });
+  assert.equal(ok.ok, true, ok.error);
+  assert.equal(ok.entry.expires_at, null);
+  assert.equal((await store.read({ scope: 'global', key: 'k' })).entry.value, 'two');
+  // A TTL named on the revive is honoured.
+  expire();
+  const ttl = await store.write({ scope: 'global', key: 'k', value: 'three', expected_version: 0, ttl_days: 7 });
+  assert.ok(Date.parse(ttl.entry.expires_at) > Date.now());
+  // Scope of the fix: a write without expected_version keeps the stored TTL.
+  expire();
+  const plain = await store.write({ scope: 'global', key: 'k', value: 'four' });
+  assert.ok(Date.parse(plain.entry.expires_at) <= Date.now());
+});
+
 test('expected_version: two tiers check against the record a read resolves, and continue its version', async () => {
   const home = tmp('lk-ver-2t-home-');
   const project = path.join(tmp('lk-ver-2t-proj-'), '.lorekit');

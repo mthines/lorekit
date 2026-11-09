@@ -12,7 +12,7 @@ import {
   serializeEntry, parseEntry, slugify, scopeToDir, extraFields, mergeAttributes, recordFieldsIssue, ATTRIBUTES_MAX_KEYS,
 } from './format.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
-import { isLive, resolveExpiresAt } from './ttl.mjs';
+import { isLive, parseTtlDays, resolveExpiresAt } from './ttl.mjs';
 import { seenCountOf, withReadFields, updatedAtOf, versionOf } from './entry-fields.mjs';
 import { pickScopeWinner } from '../shared/scope-precedence.mjs';
 import { matchesTags } from '../shared/lessons-pure.mjs';
@@ -233,8 +233,14 @@ class LocalStore {
     let override, expires_at;
     try {
       override = normalizeCreatedAt(created_at);
+      // A write that passed expected_version against an EXPIRED copy revives
+      // it in place; naming no TTL would keep the past expires_at, leaving the
+      // record hidden and purgeable. Clear it, as the hosted memory_write does
+      // (00120) — what a fresh record with no TTL gets.
+      const revivesExpired = expected_version != null && live != null && !isLive(live)
+        && parseTtlDays(ttl_days) == null;
       expires_at = resolveExpiresAt({
-        clearTtl: clear_ttl, ttlDays: ttl_days, now, current: existing?.entry.expires_at,
+        clearTtl: clear_ttl || revivesExpired, ttlDays: ttl_days, now, current: existing?.entry.expires_at,
       });
     } catch (e) {
       return { ok: false, error: e.message };

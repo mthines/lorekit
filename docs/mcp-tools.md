@@ -181,7 +181,9 @@ its `version`, and pass it back on the write: if anyone changed the content in
 between, the write is refused instead of silently overwriting their change.
 `expected_version: 0` creates the memory only if it does not exist yet — an
 archived or expired memory counts as absent, exactly as reads hide it (an expired
-one is rewritten in place and keeps counting from its old version). The
+one is rewritten in place and keeps counting from its old version; with no
+`ttl_seconds` / `clear_ttl` on that write its past expiry is cleared, so the
+record is live again). The
 check is atomic in the `memory_write` RPC. A refusal is an `isError` tool
 result (REST: `409`) with code `version_conflict`:
 

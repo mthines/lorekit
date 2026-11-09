@@ -25741,6 +25741,7 @@ declare
   v_expires_at   timestamptz;
   v_ttl_action   text := 'keep';
   v_current_version integer;  -- 00120
+  v_was_expired  boolean;     -- 00120
 begin
   -- The actor is the verified caller, never a request field (the rule 00046
   -- applied to archive/restore/purge). This function is SECURITY DEFINER and
@@ -25876,14 +25877,22 @@ begin
   -- it is the same record coming back, and restarting would need the bump
   -- trigger to second-guess liveness on every update. A caller therefore
   -- expects 0 and may read back a version above 1.
+  --
+  -- A write that names no TTL keeps the row's `expires_at`, which here is in
+  -- the PAST: the revived record would stay hidden and the nightly purge would
+  -- delete it. So when the gate passed on an expired row and the write names no
+  -- TTL, the TTL is cleared — what a brand-new insert without a TTL gets (null).
+  -- Scoped to writes that pass p_expected_version; a plain write to an expired
+  -- key keeps its past `expires_at` as before.
   if p_expected_version is not null then
     if p_expected_version < 0 then
       raise exception using errcode = '22023',
         message = format('expected_version must be >= 0, got %s', p_expected_version);
     end if;
     select case when m.expires_at is not null and m.expires_at <= now() then 0
-                else m.version end
-      into v_current_version
+                else m.version end,
+           m.expires_at is not null and m.expires_at <= now()
+      into v_current_version, v_was_expired
       from memories m
      where m.scope = p_scope
        and m.key = p_key
@@ -25899,6 +25908,9 @@ begin
       raise exception using errcode = 'LK003',
         message = format('version_conflict: expected_version=%s current_version=%s',
                          p_expected_version, v_current_version);
+    end if;
+    if coalesce(v_was_expired, false) and v_ttl_action = 'keep' then
+      v_ttl_action := 'clear';
     end if;
   end if;
 
