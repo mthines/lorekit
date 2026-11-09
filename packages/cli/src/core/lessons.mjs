@@ -401,10 +401,7 @@ export async function fetchLessons(
   // branch-relevance weight, same `now`. The scope map and `applicable` still
   // read from `ranked` — the map is a pointer to what EXISTS per scope, a
   // question diversification does not change.
-  //
-  // `applicable` is the honest denominator for the header — how many the reader
-  // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
-  // "8 of 50" stays true no matter how the render is bounded.
+
   // PINNED SCOPES GO FIRST. A scope the user listed in
   // `hooks.sessionStart.scopes` was asked for by name ("always read my
   // preferences"), so its lessons are not put up against the rest in the
@@ -414,6 +411,9 @@ export async function fetchLessons(
   const pinned = new Set(scope.pinnedScopes || []);
   const pinnedFirst = capped.filter((l) => pinned.has(l.scope)).slice(0, ceiling);
   const rest = capped.filter((l) => !pinned.has(l.scope));
+  // `applicable` is the honest denominator for the header — how many the reader
+  // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
+  // "8 of 50" stays true no matter how the render is bounded.
   return {
     scope,
     lessons: [
