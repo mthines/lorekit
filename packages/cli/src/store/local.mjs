@@ -309,11 +309,18 @@ class LocalStore {
       // two-tier read resolved: this write's copy will SHADOW that one (the
       // project tier shadows home), so a reader that saw version 2 next sees
       // 2 (identical content) or 3, never a reset to 1.
-      version: (live ?? visible)
-        ? versionOf(live ?? visible) + (contentChanged(live ?? visible, {
-          value: nextValue, content_type: contentType, attributes: mergedAttributes,
-          tags: nextTags, supersedes: supersedesId,
-        }) ? 1 : 0)
+      //
+      // With BOTH — an expired copy here and a live one resolved from the
+      // other tier — it continues from the HIGHER of the two, so the version a
+      // reader sees never goes backwards (an expired project copy at 2 under a
+      // live home copy at 5 writes 6, not 3). Content is compared against what
+      // the reader saw.
+      version: (live || visible)
+        ? Math.max(live ? versionOf(live) : 0, visible ? versionOf(visible) : 0)
+          + (contentChanged(visible ?? live, {
+            value: nextValue, content_type: contentType, attributes: mergedAttributes,
+            tags: nextTags, supersedes: supersedesId,
+          }) ? 1 : 0)
         : 1,
       value: nextValue,
     };

@@ -381,6 +381,36 @@ test('expected_version: two tiers check against the record a read resolves, and 
   assert.equal((await store.write({ scope, key: 'same', value: 'v', tags: ['t'], expected_version: 1 })).entry.version, 1);
 });
 
+test('expected_version: an expired project copy under a live home copy never moves the version backwards', async () => {
+  const home = tmp('lk-ver-2t-max-home-');
+  const project = path.join(tmp('lk-ver-2t-max-proj-'), '.lorekit');
+  const scope = 'repo::o/r';
+  fs.mkdirSync(project, { recursive: true });
+  const store = createTwoTierStore({ home, project });
+  // Project copy at v2, then expired on disk.
+  await store.write({ scope, key: 'k', value: 'p1' });
+  await store.write({ scope, key: 'k', value: 'p2' });
+  const { file } = readOnly(project);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8')
+    .replace(/^expires_at: .*\n/m, '')
+    .replace(/^version: /m, `expires_at: ${new Date(Date.now() - 60_000).toISOString()}\nversion: `));
+  // Home copy live at v5.
+  for (const v of ['h1', 'h2', 'h3', 'h4', 'h5']) await store.home.write({ scope, key: 'k', value: v });
+  const seen = (await store.read({ scope, key: 'k' })).entry;
+  assert.equal(seen.version, 5);
+  assert.equal(seen.value, 'h5');
+  const ok = await store.write({ scope, key: 'k', value: 'next', expected_version: 5 });
+  assert.equal(ok.ok, true, ok.error);
+  assert.ok(ok.entry.version >= 6, `version went backwards: ${ok.entry.version}`);
+  assert.equal(ok.entry.version, 6);
+  const read = (await store.read({ scope, key: 'k' })).entry;
+  assert.equal(read.value, 'next');
+  assert.equal(read.version, 6);
+  // Identical content to what the reader saw does not bump, and still never drops below it.
+  const { entry: same } = await store.write({ scope, key: 'k', value: 'next', expected_version: 6 });
+  assert.equal(same.version, 6);
+});
+
 test('superseded_by: read and readMany name the live records that supersede this one', async () => {
   const store = createLocalStore(tmp('lk-ver-sby-'));
   const old = (await store.write({ scope: 'global', key: 'old', value: 'v' })).entry;
