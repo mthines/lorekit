@@ -61,7 +61,9 @@ from up to 400 candidates rather than from the newest handful. Memories are
 ranked by recurrence and recency, then de-duplicated, before the budget is spent. A header
 reading `9 of 50 memories loaded` means the block was truncated — the trailing
 `More lore: …` line names which scopes hold the rest, and `memory.search` /
-`memory.read` reach them. Naming several of them by `scope::key`? Pass them all
+`memory.read` reach them. To have a scope in every session wherever you work
+(`project::preferences`, say), list it in `hooks.sessionStart.scopes`: its
+memories lead the block ahead of the ranked rest. Naming several of them by `scope::key`? Pass them all
 as `memory.read`'s `refs` array in one call instead of one `memory.read` per
 lesson — see the tool reference below. Holding only a bare key, with no scope?
 `memory.read { key }` resolves it across every scope you can see, preferring the

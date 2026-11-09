@@ -13,6 +13,7 @@
 //   hooks.sessionStart.loopCap  — max lessons per self-improvement loop bucket (default 1; 0 excludes them)
 //   hooks.sessionStart.maxLessons — max LINES that block may hold (default 100, range 3–200)
 //   hooks.sessionStart.branchHint — nudge the read toward the git branch topic ("on" default | "off")
+//   hooks.sessionStart.scopes — extra scopes read on every session start, shown first (both layers merged)
 //   hooks.userPrompt — the per-turn relevance pull ("on" default | "off")
 //   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
 //
@@ -94,6 +95,28 @@ export function normalizeUserPromptMode(v) {
   if (['off', 'none', 'false', 'disabled', 'never', 'no'].includes(s)) return 'off';
   if (['on', 'true', 'enabled', 'always', 'yes'].includes(s)) return 'on';
   return null;
+}
+
+// `hooks.sessionStart.scopes` — scopes read on EVERY session start on top of
+// the ones derived from the working directory (`project::preferences`,
+// `project::x`), and shown ahead of them. A list, so both layers merge (repo
+// first, then user) like `tags.default`. Entries are trimmed + lowercased and
+// must look like a scope (`global` or `<type>::<value>`, no whitespace); a
+// malformed entry is dropped rather than failing the hook, and a scope the store
+// rejects simply reads nothing (the read is best-effort per scope). Capped at
+// MAX_SESSION_START_SCOPES because each entry is one more read per session.
+export const MAX_SESSION_START_SCOPES = 10;
+export function normalizeSessionStartScopes(...layers) {
+  const out = [];
+  for (const layer of layers) {
+    for (const raw of asList(layer)) {
+      if (typeof raw !== 'string') continue;
+      const s = raw.trim().toLowerCase();
+      if (!(s === 'global' || /^[a-z]+::\S+$/.test(s))) continue;
+      if (!out.includes(s)) out.push(s);
+    }
+  }
+  return out.slice(0, MAX_SESSION_START_SCOPES);
 }
 
 // SessionStart shape: what the injected block LOOKS like once the budget is
@@ -469,6 +492,12 @@ export function resolveControl({
     normalizeUserPromptMode(userConfig['hooks.sessionStart.branchHint']) ||
     'on';
 
+  // `hooks.sessionStart.scopes` — union of both layers, repo first.
+  const hooksSessionStartScopes = normalizeSessionStartScopes(
+    repoConfig['hooks.sessionStart.scopes'],
+    userConfig['hooks.sessionStart.scopes'],
+  );
+
   // `updates.notify` — repo layer wins over user layer, default `auto`.
   const updatesNotify =
     normalizeUpdateNotifyMode(repoConfig['updates.notify']) ||
@@ -518,6 +547,7 @@ export function resolveControl({
     hooksSessionStartLoopCap,
     hooksSessionStartMaxLessons,
     hooksSessionStartBranchHint,
+    hooksSessionStartScopes,
     hooksAdapter,
     hooksInstructions,
     updatesNotify,

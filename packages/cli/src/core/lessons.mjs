@@ -2,7 +2,7 @@
 // Framework-agnostic — adapters shape these strings into each tool's contract.
 // Storage is reached through the resolved store (local | remote), never a
 // backend directly, so the same read path serves every mode.
-import { deriveScope } from '../shared/scope.mjs';
+import { deriveScope, withPinnedScopes } from '../shared/scope.mjs';
 // The cross-scope precedence merge comes from the dependency-free
 // `lessons-pure.mjs` — the SAME `resolvePrecedence` `tree` uses, so the hook
 // can't drift from it, and the hot path never pulls in the `lessons-view.mjs`
@@ -220,9 +220,11 @@ export async function fetchLessons(
     loopCap = DEFAULT_SESSION_START_LOOP_CAP,
     branchHint = true,
     maxLessons = DEFAULT_SESSION_START_MAX_LESSONS,
+    // `hooks.sessionStart.scopes`: read on every session, rendered FIRST.
+    pinnedScopes = [],
   } = {},
 ) {
-  const scope = scopeOverride || deriveScope(cwd);
+  const scope = withPinnedScopes(scopeOverride || deriveScope(cwd), pinnedScopes);
   // ONE ceiling, derived once, spent on both the fetch and the diversifier — the
   // two must agree or a raised ceiling asks for lines the read never fetched.
   // `formatLessons` derives the same number from the same config key, so the
@@ -246,8 +248,15 @@ export async function fetchLessons(
   // Per scope: did the read come back full? Then the count below is a floor,
   // not a total, and the map must say so rather than quietly under-report.
   const truncatedScopes = new Set();
-  for (const s of scope.readOrder) {
-    const res = await store.list({ scope: s, limit: readLimit });
+  // The scopes are read concurrently (pinned scopes can add up to ten reads, and
+  // on the remote store each is a round-trip), then consumed in `readOrder`
+  // order so precedence is unchanged. A rejected read counts as a failed scope.
+  const reads = await Promise.all(
+    scope.readOrder.map((s) =>
+      Promise.resolve().then(() => store.list({ scope: s, limit: readLimit })).catch(() => null)),
+  );
+  for (const [i, s] of scope.readOrder.entries()) {
+    const res = reads[i];
     if (!res || !res.ok) continue; // best-effort: a failed scope contributes nothing
     const raw = Array.isArray(res.entries) ? res.entries : [];
     if (raw.length >= readLimit) truncatedScopes.add(s);
@@ -399,13 +408,25 @@ export async function fetchLessons(
   // branch-relevance weight, same `now`. The scope map and `applicable` still
   // read from `ranked` — the map is a pointer to what EXISTS per scope, a
   // question diversification does not change.
-  //
+
+  // PINNED SCOPES GO FIRST. A scope the user listed in
+  // `hooks.sessionStart.scopes` was asked for by name ("always read my
+  // preferences"), so its lessons are not put up against the rest in the
+  // ranking: they lead the block in their own ranked order, and the ranked,
+  // diversified rest fills what is left. The character budget still applies, so
+  // a big pinned scope can use the whole block; that is the user's call.
+  const pinned = new Set(scope.pinnedScopes || []);
+  const pinnedFirst = capped.filter((l) => pinned.has(l.scope)).slice(0, ceiling);
+  const rest = capped.filter((l) => !pinned.has(l.scope));
   // `applicable` is the honest denominator for the header — how many the reader
   // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
   // "8 of 50" stays true no matter how the render is bounded.
   return {
     scope,
-    lessons: diversifyRankedLessons(capped, { ...rankOpts, k: ceiling }),
+    lessons: [
+      ...pinnedFirst,
+      ...diversifyRankedLessons(rest, { ...rankOpts, k: Math.max(0, ceiling - pinnedFirst.length) }),
+    ],
     scopeCounts,
     applicable: ranked.length,
   };

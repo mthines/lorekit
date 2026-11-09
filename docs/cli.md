@@ -543,6 +543,11 @@ version plus a 7-day cooldown on repeating the same version, tracked in
 swallowed and nothing but that state file is ever written]; always exit 0, best-effort, never blocks
 the host
 
+On SessionStart the read covers the workspace scopes plus any listed in
+`hooks.sessionStart.scopes` (`withPinnedScopes` slots them before `global`). Listed scopes the
+workspace would not otherwise read are pinned: their lessons skip the ranking and lead the block, and
+the ranked, diversified rest fills what is left. A listed `global` or workspace scope stays in the ranking.
+
 ### `mcp`
 
 A hand-rolled local stdio MCP server exposing `memory.*` from the resolved store — lets `.mcp.json`

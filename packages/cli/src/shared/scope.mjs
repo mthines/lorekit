@@ -48,6 +48,7 @@ export function deriveScope(cwd = process.cwd()) {
   // commands' `scopeList` exactly (`lessons-view.mjs`) — project is FIRST, so a
   // project-scoped lesson wins and IS injected. De-duplicated (a project whose
   // basename collides with a scope, or a repo with no branch, never repeats).
+  // The SessionStart hook may add pinned scopes on top (`withPinnedScopes`).
   const readOrder = [...new Set([projectScope, branchScope, repoScope, 'global'].filter(Boolean))];
 
   return {
@@ -60,4 +61,21 @@ export function deriveScope(cwd = process.cwd()) {
     readOrder,
     hasRemote: Boolean(ownerRepo),
   };
+}
+
+// Add the configured `hooks.sessionStart.scopes` to a derived scope. They slot
+// in after the workspace scopes and before `global`, so for a key that exists
+// in several places the workspace copy still wins and a pinned copy beats the
+// global one. Pure; an empty list returns the scope unchanged.
+export function withPinnedScopes(scope, pinned = []) {
+  const list = Array.isArray(pinned) ? pinned.filter((s) => typeof s === 'string' && s) : [];
+  if (list.length === 0) return scope;
+  const base = scope.readOrder.filter((s) => s !== 'global');
+  const hasGlobal = scope.readOrder.includes('global') || list.includes('global');
+  const readOrder = [...new Set([...base, ...list.filter((s) => s !== 'global'), ...(hasGlobal ? ['global'] : [])])];
+  // Only scopes the workspace would NOT have read are pinned. Pinning `global`
+  // or the repo's own scope would otherwise hoist that whole scope above the
+  // ranking and push the workspace's best lessons out of the block.
+  const pinnedScopes = [...new Set(list)].filter((s) => !scope.readOrder.includes(s));
+  return { ...scope, readOrder, pinnedScopes };
 }
