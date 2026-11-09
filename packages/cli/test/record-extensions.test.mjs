@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createLocalStore } from '../src/store/local.mjs';
+import { createLocalStore, createTwoTierStore } from '../src/store/local.mjs';
 import { parseEntry } from '../src/store/format.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
@@ -292,6 +292,41 @@ test('expected_version: a match writes, a mismatch refuses and writes nothing', 
     assert.equal(r.ok, false);
     assert.match(r.error, /expected_version must be a non-negative integer/);
   }
+});
+
+test('expected_version: two tiers check against the record a read resolves, and continue its version', async () => {
+  const home = tmp('lk-ver-2t-home-');
+  const project = path.join(tmp('lk-ver-2t-proj-'), '.lorekit');
+  const scope = 'repo::o/r';
+  // The key lives only in the home tier, at version 2 (written before the
+  // project tier existed).
+  const homeOnly = createTwoTierStore({ home, project });
+  await homeOnly.write({ scope, key: 'k', value: 'one' });
+  assert.equal((await homeOnly.write({ scope, key: 'k', value: 'two' })).entry.version, 2);
+  // Opt the project tier in: writes now target it, reads fall through to home.
+  fs.mkdirSync(project, { recursive: true });
+  const store = createTwoTierStore({ home, project });
+  assert.equal((await store.read({ scope, key: 'k' })).entry.version, 2);
+  // 0 is refused — a reader sees the home record — and reports its version.
+  const absent = await store.write({ scope, key: 'k', value: 'x', expected_version: 0 });
+  assert.equal(absent.code, 'version_conflict');
+  assert.equal(absent.current_version, 2);
+  // The version the reader saw is accepted, and the project copy that now
+  // shadows home continues it rather than restarting at 1.
+  const ok = await store.write({ scope, key: 'k', value: 'three', expected_version: 2 });
+  assert.equal(ok.ok, true, ok.error);
+  assert.equal(ok.entry.version, 3);
+  assert.equal(readOnly(project).entry.value, 'three');
+  assert.equal(readOnly(home).entry.version, 2);
+  const read = (await store.read({ scope, key: 'k' })).entry;
+  assert.equal(read.value, 'three');
+  assert.equal(read.version, 3);
+  // From here the project copy is the one checked.
+  assert.equal((await store.write({ scope, key: 'k', value: 'y', expected_version: 2 })).current_version, 3);
+  // Identical content copied up does not bump: a fresh home-only key at v1,
+  // re-written unchanged through the project tier, stays at 1.
+  await homeOnly.home.write({ scope, key: 'same', value: 'v', tags: ['t'] });
+  assert.equal((await store.write({ scope, key: 'same', value: 'v', tags: ['t'], expected_version: 1 })).entry.version, 1);
 });
 
 test('superseded_by: read and readMany name the live records that supersede this one', async () => {

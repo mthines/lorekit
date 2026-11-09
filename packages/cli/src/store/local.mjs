@@ -165,7 +165,7 @@ class LocalStore {
   async write({
     scope, key, value, tags, source_agent, trigger, created_at, ttl_days, clear_ttl,
     origin_repo, origin_branch, origin_commit, origin_pr, kind, host,
-    attributes, content_type, supersedes, expected_version,
+    attributes, content_type, supersedes, expected_version, _resolved,
   } = {}) {
     const now = new Date().toISOString();
     const existing = this._findByKey(scope, key);
@@ -200,6 +200,14 @@ class LocalStore {
         : null)
       ?? (supersedesId && supersedesId === live?.id ? 'a memory cannot supersede itself' : null);
     if (issue) return { ok: false, error: issue };
+    // The record a READ resolves for this scope+key — what the caller last saw.
+    // Standalone, that is this store's own copy when it is live. Under a
+    // TwoTierStore the caller passes `_resolved` (internal): the two-tier
+    // read's answer, which can be the OTHER tier's copy when this tier holds
+    // none (a home record seen through an active project tier).
+    const visible = _resolved !== undefined
+      ? _resolved
+      : live;
     // Optimistic concurrency (00120), the local twin of the hosted check in
     // `memory_write`: the write lands only when the record is still at the
     // version the caller last read, and `0` means "must not exist yet". An
@@ -209,7 +217,7 @@ class LocalStore {
       if (!Number.isInteger(expected_version) || expected_version < 0) {
         return { ok: false, error: 'expected_version must be a non-negative integer' };
       }
-      const current = live ? versionOf(live) : 0;
+      const current = visible ? versionOf(visible) : 0;
       if (expected_version !== current) {
         return {
           ok: false,
@@ -284,8 +292,13 @@ class LocalStore {
       // Version (00120), bumped under the hosted trigger's rule: only a change
       // a reader can see counts. A first write — or a revive of an archived
       // key, which the server inserts as a fresh row — starts at 1.
-      version: live
-        ? versionOf(live) + (contentChanged(live, {
+      //
+      // With no copy in this tier, the count continues from the record the
+      // two-tier read resolved: this write's copy will SHADOW that one (the
+      // project tier shadows home), so a reader that saw version 2 next sees
+      // 2 (identical content) or 3, never a reset to 1.
+      version: (live ?? visible)
+        ? versionOf(live ?? visible) + (contentChanged(live ?? visible, {
           value: nextValue, content_type: contentType, attributes: mergedAttributes,
           tags: nextTags, supersedes: supersedesId,
         }) ? 1 : 0)
@@ -672,8 +685,14 @@ class TwoTierStore {
     return { ok: true, entries: attachSupersededBy(entries, this._tiers()), missing };
   }
 
+  // The expected_version check (00120) is against the record a two-tier READ
+  // resolves — project shadows home — not only the target tier's copy: with a
+  // project tier active and the key held only in home, a reader saw the home
+  // version, and a write naming it must land (in the project tier, where it
+  // then shadows home and continues that version). See LocalStore.write.
   async write(args = {}) {
-    return this.tierFor(args.scope).write(args);
+    const resolved = args.key == null ? null : this._read({ scope: args.scope, key: args.key });
+    return this.tierFor(args.scope).write({ ...args, _resolved: resolved });
   }
 
   async putEntry(entry = {}) {
