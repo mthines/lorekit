@@ -12066,6 +12066,10 @@ begin
     '120 AC-1b: an untouched row must read version 1';
   assert not exists (select 1 from memories where version < 1),
     '120 AC-1b: no row may read below version 1';
+  -- added NOT VALID, then validated in its own statement: it must end VALID
+  assert (select convalidated from pg_constraint
+           where conname = 'memories_version_positive' and conrelid = 'memories'::regclass),
+    '120 AC-1r: memories_version_positive must be validated after its NOT VALID add';
 
   -- ── a write starts at 1 and returns it ───────────────────────────────────
   select id, version into v_id, v_v
