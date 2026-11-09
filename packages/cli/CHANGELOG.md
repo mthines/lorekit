@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.78.0](https://github.com/mthines/lorekit/compare/cli-v1.77.0...cli-v1.78.0) (2026-11-09)
+
+
+### Features
+
+* memory versions, expected_version and superseded_by ([#745](https://github.com/mthines/lorekit/issues/745)) ([8095a1d](https://github.com/mthines/lorekit/commit/8095a1daf504e6ffb3dfb56a5f13c780baf7a305))
+
 ## [1.77.0](https://github.com/mthines/lorekit/compare/cli-v1.76.0...cli-v1.77.0) (2026-11-08)
 
 
