@@ -100,7 +100,7 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `kind` | | Bucket kind: `lesson`, `bus`, or `signal`. Omit to have it inferred from a `loop::<host>-lessons` tag. See **Taxonomy** below. |
 | `host` | | Owning skill/agent (e.g. `reviewer`, `aw`). Omit to have it inferred from a `loop::<host>-lessons` tag. |
 | `org` | | Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (`member`/`admin`/`owner`, not `viewer`) of the org — verified server-side; supplying an org you're not authorized for is rejected. |
-| `ttl_days` | | Integer 1–365. The memory auto-expires after this many days. Mutually exclusive with `ttl_minutes` and `ttl_seconds`; supply at most one. On an update, refreshes the expiry; omitting all three leaves the existing expiry unchanged. |
+| `ttl_days` | | Integer 1–365. The memory auto-expires after this many days. Mutually exclusive with `ttl_minutes` and `ttl_seconds`; supply at most one. On an update, refreshes the expiry; omitting all three leaves the existing expiry unchanged (except on an `expected_version` write that revives an expired memory, which clears the past expiry). |
 | `ttl_minutes` | | Integer 1–525600 (365 days in minutes). The memory auto-expires after this many minutes. Mutually exclusive with `ttl_days` and `ttl_seconds`. |
 | `ttl_seconds` | | Integer 1–31536000 (365 days in seconds). The memory auto-expires after this many seconds. Useful for short-lived session memories (e.g. 30 s, 5 min). Mutually exclusive with `ttl_days` and `ttl_minutes`. |
 | `origin_repo` | | Provenance: `owner/name` of the repository the lesson was recorded from. Lowercased. |
@@ -182,7 +182,7 @@ between, the write is refused instead of silently overwriting their change.
 `expected_version: 0` creates the memory only if it does not exist yet — an
 archived or expired memory counts as absent, exactly as reads hide it (an expired
 one is rewritten in place and keeps counting from its old version; with no
-`ttl_seconds` / `clear_ttl` on that write its past expiry is cleared, so the
+`ttl_days` / `ttl_minutes` / `ttl_seconds` / `clear_ttl` on that write its past expiry is cleared, so the
 record is live again). The
 check is atomic in the `memory_write` RPC. A refusal is an `isError` tool
 result (REST: `409`) with code `version_conflict`:

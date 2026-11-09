@@ -128,7 +128,7 @@ export const MCP_TOOL_DEFS = [
           "type": "integer",
           "minimum": 1,
           "maximum": 365,
-          "description": "Number of days until the memory auto-expires. Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged."
+          "description": "Number of days until the memory auto-expires. Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged — except on an `expected_version` write that revives an expired memory, where omitting it (and `clear_ttl`) clears the past expiry so the memory is live again."
         },
         "clear_ttl": {
           "type": "boolean",
@@ -177,7 +177,7 @@ export const MCP_TOOL_DEFS = [
         "expected_version": {
           "type": "integer",
           "minimum": 0,
-          "description": "Optimistic concurrency: the `version` you last read. If the stored version differs, the write is rejected with `version_conflict` (naming the current version) and nothing changes. `0` means the memory must not exist yet. Omit for an unconditional write."
+          "description": "Optimistic concurrency: the `version` you last read. If the stored version differs, the write is rejected with `version_conflict` (naming the current version) and nothing changes. `0` means the memory must not exist yet. An archived or expired memory counts as absent (version `0`), exactly as reads hide it; an expired one is rewritten in place, and with no `ttl_days` / `clear_ttl` on that write its past expiry is cleared. Omit for an unconditional write."
         }
       }
     },

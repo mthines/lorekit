@@ -244,7 +244,7 @@ Store or update a lesson.
 | `host` |  | string | The owning skill or agent (e.g. `reviewer`, `aw`, `ci-auto-fix`). Omit to have it inferred from a `loop::<host>-lessons` tag. |
 | `created_at` |  | string | Optional ISO 8601 creation date. Use when migrating a pre-existing memory so it is dated by its original time instead of now. Rejected if invalid or in the future. Applies only when the memory is first created. _(date-time)_ |
 | `org` |  | string | Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (member/admin/owner, not viewer) of the org, verified server-side — supplying an org slug you are not authorized for is rejected. |
-| `ttl_days` |  | integer | Number of days until the memory auto-expires. Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged. _(1–365)_ |
+| `ttl_days` |  | integer | Number of days until the memory auto-expires. Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged — except on an `expected_version` write that revives an expired memory, where omitting it (and `clear_ttl`) clears the past expiry so the memory is live again. _(1–365)_ |
 | `clear_ttl` |  | boolean | When true, removes the existing expiry and makes the memory permanent again. Takes precedence over ttl_days when both are supplied. |
 | `origin_repo` |  | string | Provenance: the owner/name of the repository this memory was recorded from. Distinct from `scope`, which says where the lesson APPLIES. |
 | `origin_branch` |  | string | Provenance: the git branch this memory was recorded from. Stored verbatim (case-sensitive) so its GitHub link resolves. |
@@ -254,7 +254,7 @@ Store or update a lesson.
 | `attributes` |  | object | Open metadata as namespaced keys with scalar values, e.g. `{"ci.run_url": "https://…", "vcs.pr": 482}`. Keys are lowercase and dot-separated; at most 32 keys, each key at most 128 characters and each string value at most 1024. On an update the map is MERGED into what is stored, and a key set to null is removed. |
 | `content_type` |  | string | What `value` is. Defaults to `text/markdown`. With `application/json` the value must parse as JSON. Omit on an update to keep the stored type. |
 | `supersedes` |  | string | The id of the memory this one replaces (from `memory.read`). Must name a memory this token can read that has the same owner as the one being written (personal to personal, or the same org); anything else is rejected as not found. Kept on update unless re-supplied. |
-| `expected_version` |  | integer | Optimistic concurrency: the `version` you last read. If the stored version differs, the write is rejected with `version_conflict` (naming the current version) and nothing changes. `0` means the memory must not exist yet. Omit for an unconditional write. _(min 0)_ |
+| `expected_version` |  | integer | Optimistic concurrency: the `version` you last read. If the stored version differs, the write is rejected with `version_conflict` (naming the current version) and nothing changes. `0` means the memory must not exist yet. An archived or expired memory counts as absent (version `0`), exactly as reads hide it; an expired one is rewritten in place, and with no `ttl_days` / `clear_ttl` on that write its past expiry is cleared. Omit for an unconditional write. _(min 0)_ |
 
 Requires **write** permission.
 
