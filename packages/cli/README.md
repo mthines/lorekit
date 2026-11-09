@@ -1117,6 +1117,14 @@ Both files share this schema — all fields optional:
                            // value FALLS THROUGH to a valid user value rather than
                            // owning the layer
 
+  "hooks.sessionStart.scopes": ["project::preferences"],
+                           // extra scopes read on every session start, on top of
+                           // the ones the working directory implies; their
+                           // memories lead the block ahead of the ranked rest.
+                           // Slotted before "global" for same-key precedence.
+                           // Both layers merge (repo first), max 10; entries not
+                           // shaped like a scope are ignored
+
   "hooks.adapter": "claude",
                            // explicit adapter when auto-detection is ambiguous
                            // values: "claude" | "cursor" | "codex"

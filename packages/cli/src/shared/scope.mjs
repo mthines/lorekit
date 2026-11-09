@@ -48,6 +48,7 @@ export function deriveScope(cwd = process.cwd()) {
   // commands' `scopeList` exactly (`lessons-view.mjs`) — project is FIRST, so a
   // project-scoped lesson wins and IS injected. De-duplicated (a project whose
   // basename collides with a scope, or a repo with no branch, never repeats).
+  // The SessionStart hook may add pinned scopes on top (`withPinnedScopes`).
   const readOrder = [...new Set([projectScope, branchScope, repoScope, 'global'].filter(Boolean))];
 
   return {

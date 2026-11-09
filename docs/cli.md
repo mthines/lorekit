@@ -497,10 +497,6 @@ same "not filtered" and both should be dropped.
 
 ### `hook`
 
-On SessionStart the read covers the workspace scopes plus any listed in
-`hooks.sessionStart.scopes` (`withPinnedScopes` slots them before `global`); lessons from those pinned
-scopes skip the ranking and lead the block, and the ranked, diversified rest fills what is left.
-
 The shared hook engine behind the plugins — injects the
 ranked-then-**bucket-capped-then-MMR-diversified** top lessons on SessionStart [`sessionRankOpts`
 seeds a relevance query from the branch name (`branchQueryTerms` distils `scope.branch` after
@@ -546,6 +542,10 @@ version plus a 7-day cooldown on repeating the same version, tracked in
 `$LOREKIT_HOME/update-state.json` (never created when `updates.notify` is `off`); any error is
 swallowed and nothing but that state file is ever written]; always exit 0, best-effort, never blocks
 the host
+
+On SessionStart the read covers the workspace scopes plus any listed in
+`hooks.sessionStart.scopes` (`withPinnedScopes` slots them before `global`); lessons from those pinned
+scopes skip the ranking and lead the block, and the ranked, diversified rest fills what is left.
 
 ### `mcp`
 
