@@ -248,8 +248,15 @@ export async function fetchLessons(
   // Per scope: did the read come back full? Then the count below is a floor,
   // not a total, and the map must say so rather than quietly under-report.
   const truncatedScopes = new Set();
-  for (const s of scope.readOrder) {
-    const res = await store.list({ scope: s, limit: readLimit });
+  // The scopes are read concurrently (pinned scopes can add up to ten reads, and
+  // on the remote store each is a round-trip), then consumed in `readOrder`
+  // order so precedence is unchanged. A rejected read counts as a failed scope.
+  const reads = await Promise.all(
+    scope.readOrder.map((s) =>
+      Promise.resolve().then(() => store.list({ scope: s, limit: readLimit })).catch(() => null)),
+  );
+  for (const [i, s] of scope.readOrder.entries()) {
+    const res = reads[i];
     if (!res || !res.ok) continue; // best-effort: a failed scope contributes nothing
     const raw = Array.isArray(res.entries) ? res.entries : [];
     if (raw.length >= readLimit) truncatedScopes.add(s);

@@ -2054,3 +2054,18 @@ test('fetchLessons reads pinned scopes and shows their lessons first', async () 
   const unpinned = await fetchLessons(fakeStore(byScope), process.cwd(), { now: Date.parse(at), scope });
   assert.ok(!unpinned.lessons.some((l) => l.scope === 'project::preferences'), 'not read unless pinned');
 });
+
+test('pinning a scope the workspace already reads does not hoist it above the ranking', async () => {
+  const scope = { branch: 'main', readOrder: ['repo::a/b', 'global'] };
+  const at = '2026-08-01T00:00:00.000Z';
+  const old = '2025-01-01T00:00:00.000Z';
+  const byScope = {
+    'repo::a/b': [{ scope: 'repo::a/b', key: 'repo-1', value: 'recurring repo lesson', seenCount: 9, updatedAt: at }],
+    global: Array.from({ length: 30 }, (_, i) => ({ scope: 'global', key: `g${i}`, value: `old global ${i}`, updatedAt: old })),
+  };
+  const opts = { now: Date.parse(at), scope, maxLessons: 10 };
+  const plain = await fetchLessons(fakeStore(byScope), process.cwd(), opts);
+  const pinned = await fetchLessons(fakeStore(byScope), process.cwd(), { ...opts, pinnedScopes: ['global', 'repo::a/b'] });
+  assert.deepEqual(pinned.lessons.map((l) => l.key), plain.lessons.map((l) => l.key));
+  assert.equal(pinned.lessons[0].key, 'repo-1');
+});

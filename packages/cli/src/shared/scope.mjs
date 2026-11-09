@@ -73,5 +73,9 @@ export function withPinnedScopes(scope, pinned = []) {
   const base = scope.readOrder.filter((s) => s !== 'global');
   const hasGlobal = scope.readOrder.includes('global') || list.includes('global');
   const readOrder = [...new Set([...base, ...list.filter((s) => s !== 'global'), ...(hasGlobal ? ['global'] : [])])];
-  return { ...scope, readOrder, pinnedScopes: [...new Set(list)] };
+  // Only scopes the workspace would NOT have read are pinned. Pinning `global`
+  // or the repo's own scope would otherwise hoist that whole scope above the
+  // ranking and push the workspace's best lessons out of the block.
+  const pinnedScopes = [...new Set(list)].filter((s) => !scope.readOrder.includes(s));
+  return { ...scope, readOrder, pinnedScopes };
 }
