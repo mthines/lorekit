@@ -106,7 +106,7 @@ is already running. Start it before `pnpm test`:
 The test setup does not start it for you.
 ```
 
-The frontmatter is the envelope: `address` and `key` say where it's true, `id` is its identity, `lifecycle` says when it stops, and `written_by` answers the fork. `version` counts the corrections to this record, and `supersedes` names an older record this one replaces, so a reader of that older record can be told it's out of date. The Markdown below it is the memory itself, and `content_type` tells a reader how to treat it. Anything else a tool needs goes in `attributes`, under a namespace other tools can ignore. The same record serialises to JSON just as well, for a tool that wants to send it over the wire.
+The frontmatter is the envelope: `address` and `key` say where it's true, `id` is its identity, `lifecycle` says when it stops, and `written_by` answers the fork. `version` counts the corrections to this record, and `supersedes` names an older record this one replaces, so a reader of that older record can be told it's out of date. A fix to the same claim bumps `version`. A different claim that replaces it is a new record, starting again at version 1, that `supersedes` the old one. The Markdown below it is the memory itself, and `content_type` tells a reader how to treat it. Anything else a tool needs goes in `attributes`, under a namespace other tools can ignore. The same record serialises to JSON just as well, for a tool that wants to send it over the wire.
 
 Around that record, a spec would mirror OpenTelemetry's layers:
 
