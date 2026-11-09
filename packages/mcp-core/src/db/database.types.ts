@@ -185,6 +185,7 @@ export type Database = {
           updated_by: string | null
           user_id: string | null
           value: string
+          version: number
         }
         Insert: {
           archived_at?: string | null
@@ -210,6 +211,7 @@ export type Database = {
           updated_by?: string | null
           user_id?: string | null
           value: string
+          version?: number
         }
         Update: {
           archived_at?: string | null
@@ -235,6 +237,7 @@ export type Database = {
           updated_by?: string | null
           user_id?: string | null
           value?: string
+          version?: number
         }
         Relationships: [
           {
@@ -1027,6 +1030,7 @@ export type Database = {
           p_clear_ttl?: boolean
           p_content_type?: string
           p_created_at?: string
+          p_expected_version?: number
           p_key: string
           p_key_org_access?: string
           p_key_org_ids?: string[]
@@ -1070,6 +1074,7 @@ export type Database = {
           trigger: string | null
           updated_at: string
           value: string
+          version: number
         }[]
       }
       purge_archived_memories: {
