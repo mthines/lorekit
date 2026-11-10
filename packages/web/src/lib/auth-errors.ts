@@ -128,3 +128,30 @@ export function friendlyAuthError(error: AuthErrorLike): string {
 
   return error.message.charAt(0).toUpperCase() + error.message.slice(1);
 }
+
+/**
+ * Copy for a failed account change made from Settings while signed in (the
+ * display name, the email address).
+ *
+ * `friendlyAuthError` is written for the sign-in screens, so two of its
+ * answers point the wrong way here: an expired session says "request a new
+ * link", and a rate limit says "too many sign-in attempts". This corrects
+ * those two and defers to it for everything else.
+ */
+export function friendlySettingsUpdateError(error: AuthErrorLike): string {
+  const msg = error.message.toLowerCase();
+  const code = (error.code ?? '').toLowerCase();
+
+  if (code === 'session_not_found' || msg.includes('auth session missing')) {
+    return 'Your session has expired. Sign in again, then retry.';
+  }
+  if (
+    code === 'over_request_rate_limit' ||
+    code === 'over_email_send_rate_limit' ||
+    msg.includes('rate limit') ||
+    error.status === 429
+  ) {
+    return 'Too many changes in a short time. Wait a few minutes and try again.';
+  }
+  return friendlyAuthError(error);
+}

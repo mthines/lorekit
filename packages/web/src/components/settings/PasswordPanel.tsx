@@ -3,15 +3,11 @@
 import { useId, useState } from 'react';
 import { Eye, EyeOff, KeyRound } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { friendlyAuthError } from '@/lib/auth-errors';
+import { friendlySettingsUpdateError } from '@/lib/auth-errors';
 import { reportAuthAttempt, reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
 import { MIN_PASSWORD_LENGTH, validatePasswordConfirmation } from '@/lib/password-policy';
 import { Button } from '@/components/ui/Button';
-
-const LABEL_CLASS = 'text-xs font-medium text-[var(--color-content-secondary)]';
-
-const INPUT_CLASS =
-  'h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:opacity-50';
+import { SETTINGS_INPUT_CLASS, SETTINGS_LABEL_CLASS } from './form-styles';
 
 /**
  * Set-or-change-password form for /settings/user.
@@ -77,7 +73,7 @@ export function PasswordPanel() {
     setBusy(false);
     if (updateError) {
       reportAuthFailure('password_change_settings', updateError);
-      setError(friendlyAuthError(updateError));
+      setError(friendlySettingsUpdateError(updateError));
       return;
     }
     reportAuthSuccess('password_change_settings');
@@ -90,7 +86,7 @@ export function PasswordPanel() {
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={passwordId} className={LABEL_CLASS}>
+        <label htmlFor={passwordId} className={SETTINGS_LABEL_CLASS}>
           New password
         </label>
         <div className="relative">
@@ -104,7 +100,7 @@ export function PasswordPanel() {
             value={password}
             onChange={onEdit(setPassword)}
             disabled={busy}
-            className={`${INPUT_CLASS} pr-12`}
+            className={`${SETTINGS_INPUT_CLASS} pr-12`}
           />
           <button
             type="button"
@@ -129,7 +125,7 @@ export function PasswordPanel() {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={confirmId} className={LABEL_CLASS}>
+        <label htmlFor={confirmId} className={SETTINGS_LABEL_CLASS}>
           Confirm new password
         </label>
         <input
@@ -142,7 +138,7 @@ export function PasswordPanel() {
           onChange={onEdit(setConfirmation)}
           onBlur={handleConfirmationBlur}
           disabled={busy}
-          className={INPUT_CLASS}
+          className={SETTINGS_INPUT_CLASS}
         />
       </div>
 

@@ -1,14 +1,18 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
-import { LogOut, Trash2 } from 'lucide-react';
+import { LogOut, Pencil, Trash2, X } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { isDeveloperEmail } from '@/lib/developer-users';
+import { resolveDisplayName } from '@/lib/display-name';
 import { registerClick } from '@/lib/click-gesture';
 import { toggleDeveloperNavRevealed } from '@/lib/hooks/useDeveloperNavRevealed';
 import { Button } from '@/components/ui/Button';
+import { disclosurePanelProps, disclosureTriggerProps } from '@/components/ui/disclosure';
+import { DisplayNameForm } from './DisplayNameForm';
+import { EmailChangeForm, type EmailChangeReturn } from './EmailChangeForm';
 
 /**
  * 5 consecutive clicks (within 2s of each other) toggles the developer nav's
@@ -24,20 +28,34 @@ const REVEAL_CLICK_WINDOW_MS = 2000;
 
 interface UserSettingsPanelProps {
   user: User;
+  /** What an email-change confirmation link brought back — see `EmailChangeForm`. */
+  emailChangeReturn?: EmailChangeReturn;
 }
 
 /**
  * Client component rendered inside the /settings/user SectionPanel.
- * Shows the signed-in user's avatar, name, and email, then surfaces
- * Sign out and Delete account as explicit actions.
+ * Shows the signed-in user's avatar, name, and email, with an Edit toggle that
+ * reveals the display-name and email forms, then surfaces Sign out and Delete
+ * account as explicit actions.
  */
-export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
+const NO_EMAIL_CHANGE_RETURN: EmailChangeReturn = { returned: false, linkError: null };
+
+export function UserSettingsPanel({
+  user,
+  emailChangeReturn = NO_EMAIL_CHANGE_RETURN,
+}: UserSettingsPanelProps) {
   const router = useRouter();
   const [signOutLoading, setSignOutLoading] = useState(false);
   const [deleteStep, setDeleteStep] = useState<'idle' | 'confirm' | 'deleting'>('idle');
   const [deleteError, setDeleteError] = useState('');
 
-  const displayName = (user.user_metadata?.['full_name'] as string) ?? user.email ?? 'User';
+  // Editing the name or email is a secondary task, so the forms sit behind an
+  // Edit toggle — except when an email change needs the user's attention: a
+  // confirmation link just returned here, or a change is still pending.
+  const profilePanelId = useId();
+  const [editing, setEditing] = useState(() => emailChangeReturn.returned || !!user.new_email);
+
+  const displayName = resolveDisplayName(user);
   const avatarUrl = user.user_metadata?.['avatar_url'] as string | undefined;
   const email = user.email;
 
@@ -120,11 +138,41 @@ export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
             </div>
           )}
         </button>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-[var(--color-content-primary)]">{displayName}</p>
           {email && (
             <p className="truncate text-xs text-[var(--color-content-secondary)]">{email}</p>
           )}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          leftIcon={
+            editing ? (
+              <X className="size-3.5 shrink-0" aria-hidden />
+            ) : (
+              <Pencil className="size-3.5 shrink-0" aria-hidden />
+            )
+          }
+          {...disclosureTriggerProps(editing, profilePanelId)}
+          analyticsId="settings.profile-edit-toggle"
+          onClick={() => setEditing((open) => !open)}
+        >
+          {editing ? 'Close' : 'Edit'}
+        </Button>
+      </div>
+
+      {/* ── Profile (disclosure) ───────────────────────────────────────── */}
+      {/*
+        Kept mounted and `hidden` (see `ui/disclosure.ts`), so a half-typed
+        name survives a collapse. The wrapper carries no display class:
+        `flex` on the same element would override `hidden`.
+      */}
+      <div {...disclosurePanelProps(editing, profilePanelId)}>
+        <div className="flex flex-col gap-5">
+          <DisplayNameForm user={user} />
+          <EmailChangeForm user={user} emailChangeReturn={emailChangeReturn} />
         </div>
       </div>
 

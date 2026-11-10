@@ -1088,6 +1088,16 @@ uses the same three. Every RUM signal additionally carries
 `feature_flag.<flagKey>` (variant) and `lorekit.feature_flag.reason.<flagKey>`;
 see `docs/feature-flags.md` § Running an experiment.
 
+### Settings (`settings.*`)
+
+| Event | Emitted when | Attributes |
+|-------|--------------|------------|
+| `settings.display_name_saved` | Settings → User saved the display name (`DisplayNameForm.tsx`), on success and on failure | `lorekit.settings.display_name.outcome` (`success`/`error`), `.cleared` (the field was saved empty), `.error_code` (failures only — `authErrorCode`'s bounded Supabase code, never the message) |
+
+The email change on the same page is an auth flow and reports through the
+`auth.*` events below (`auth.method = email_change_settings`); the password
+form does too (`password_change_settings`).
+
 ---
 
 ## Browser auth events (`auth.*`)
@@ -1105,7 +1115,10 @@ Every authentication surface in the dashboard emits a discrete RUM event through
 
 `auth.method` is one of `github_oauth`, `email_password`, `email_password_signup`,
 `email_otp`, `email_confirmation`, `password_reset_request`,
-`password_reset_complete`, `password_change_settings`.
+`password_reset_complete`, `password_change_settings`, `email_change_settings`.
+`email_change_settings` (Settings → User, `EmailChangeForm.tsx`) emits
+`auth.pending` rather than `auth.success` when the request succeeds, because the
+address only changes once the emailed link is opened.
 
 ### Signing up vs signing in
 
@@ -1119,7 +1132,7 @@ takes a reader who already knows that `email_password_signup` is registration an
 | `login` | `email_password` |
 | `login_or_signup` | `github_oauth`, `email_otp` |
 | `recovery` | `password_reset_request`, `password_reset_complete` |
-| `account_management` | `password_change_settings` |
+| `account_management` | `password_change_settings`, `email_change_settings` |
 
 `login_or_signup` is not a hedge. Both of those paths create an account when
 there is none and sign the visitor in when there is, and **the browser cannot
@@ -1243,7 +1256,7 @@ way to surface before, and the one a misconfigured DNS record on the sending
 domain trips first.
 
 The funnel is `auth.attempt` minus `auth.success`, grouped by `auth.method` — for
-every method that emits both. Three do not, in different directions, so read
+every method that emits both. Four do not, in different directions, so read
 those rows differently:
 
 - `github_oauth` emits an attempt and never a success, so its subtraction is
@@ -1262,8 +1275,14 @@ those rows differently:
   `pending` on its own — compared against `email_confirmation` successes on
   `/welcome` — as the signal for a mailer that accepted the signup and never
   delivered it.
+- `email_change_settings` (Settings → User) emits an attempt, then `auth.pending`
+  when Supabase accepts the request — the address only changes once the
+  emailed link is opened, in a later document — so read it as
+  `attempt − pending − failure`, never `attempt − success`. Its `auth.success`
+  fires only if Supabase applies the change immediately, which current GoTrue
+  does for anonymous users alone.
 
-Two paths deliberately emit no `auth.success`:
+Three paths deliberately emit no `auth.success`:
 
 - **GitHub OAuth** — success is a redirect to a new document, so the page that
   would report it is already gone. Arrival at the destination is the evidence.
@@ -1274,6 +1293,10 @@ Two paths deliberately emit no `auth.success`:
   both cases, preserving that symmetry) — see `reportAuthPending` in
   `lib/auth-telemetry.ts`. That path completes as `email_confirmation` on
   `/welcome`.
+- **The email-change request** (`EmailChangeForm.tsx`) — the account still has
+  its old address until the confirmation link is opened, so it emits
+  `auth.pending`. Completion is visible on the return to `/settings/user`, not
+  as a browser auth event.
 
 > **These used to be signal attributes, and must never go back to being any.**
 > The surfaces previously called `addSignalAttribute('auth.method', …)`, which

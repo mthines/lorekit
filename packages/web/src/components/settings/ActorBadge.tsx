@@ -3,7 +3,7 @@
  *
  * Mirrors the Sidebar avatar idiom (components/layout/Sidebar.tsx, the "User"
  * block) — `size-N shrink-0 overflow-hidden rounded-full` wrapper, `object-cover`
- * image, and the `full_name ?? email` name text — but colocated here since
+ * image, and the `resolveDisplayName` name text — but colocated here since
  * `AuditLogFeed` is its only consumer today (a future second consumer, e.g.
  * Sidebar itself, is a candidate to promote this into `components/ui/`).
  *

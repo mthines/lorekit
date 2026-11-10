@@ -90,6 +90,7 @@ describe('authIntent', () => {
     expect(authIntent('password_reset_request')).toBe('recovery');
     expect(authIntent('password_reset_complete')).toBe('recovery');
     expect(authIntent('password_change_settings')).toBe('account_management');
+    expect(authIntent('email_change_settings')).toBe('account_management');
   });
 
   // The mapping is a total Record, so a new method is a type error rather than
@@ -104,6 +105,7 @@ describe('authIntent', () => {
       'password_reset_request',
       'password_reset_complete',
       'password_change_settings',
+      'email_change_settings',
     ];
     for (const method of methods) {
       expect(authIntent(method)).toBeTruthy();

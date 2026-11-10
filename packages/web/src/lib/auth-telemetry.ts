@@ -59,7 +59,8 @@ export type AuthMethod =
   | 'email_confirmation'
   | 'password_reset_request'
   | 'password_reset_complete'
-  | 'password_change_settings';
+  | 'password_change_settings'
+  | 'email_change_settings';
 
 /**
  * What the visitor is trying to do, as opposed to which mechanism they picked.
@@ -91,6 +92,7 @@ const INTENT_BY_METHOD: Record<AuthMethod, AuthIntent> = {
   password_reset_request: 'recovery',
   password_reset_complete: 'recovery',
   password_change_settings: 'account_management',
+  email_change_settings: 'account_management',
 };
 
 /** The intent a method serves. */

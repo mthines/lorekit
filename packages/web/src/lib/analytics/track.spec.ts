@@ -549,3 +549,28 @@ describe('track — feature flags', () => {
     });
   });
 });
+
+describe('track — settings.display_name_saved', () => {
+  it('reports a successful save and whether it cleared the name', () => {
+    track({ name: 'settings.display_name_saved', outcome: 'success', cleared: false });
+    expect(lastCall().name).toBe('settings.display_name_saved');
+    expect(lastCall().attributes).toEqual({
+      'lorekit.settings.display_name.outcome': 'success',
+      'lorekit.settings.display_name.cleared': 'false',
+    });
+  });
+
+  it('carries the bounded error code on a failure', () => {
+    track({
+      name: 'settings.display_name_saved',
+      outcome: 'error',
+      cleared: true,
+      errorCode: 'session_not_found',
+    });
+    expect(lastCall().attributes).toEqual({
+      'lorekit.settings.display_name.outcome': 'error',
+      'lorekit.settings.display_name.cleared': 'true',
+      'lorekit.settings.display_name.error_code': 'session_not_found',
+    });
+  });
+});
