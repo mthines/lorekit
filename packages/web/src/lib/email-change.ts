@@ -123,6 +123,16 @@ export function friendlyEmailChangeError(error: AuthErrorLike): string {
 }
 
 /**
+ * Did Supabase itself reject the link (expired, reused, or superseded)? Then
+ * nothing changed. Every other `?error=` code comes from the code exchange
+ * AFTER Supabase verified the change — see {@link friendlyEmailChangeLinkError}.
+ */
+export function isRejectedLink(code: string): boolean {
+  const normalized = code.toLowerCase();
+  return normalized === 'otp_expired' || normalized === 'access_denied';
+}
+
+/**
  * Copy for a confirmation link that came back with `?error=<code>`.
  *
  * Two different failures arrive this way, and they mean opposite things:
@@ -142,8 +152,7 @@ export function friendlyEmailChangeError(error: AuthErrorLike): string {
  * never echoed into the page.
  */
 export function friendlyEmailChangeLinkError(code: string): string {
-  const normalized = code.toLowerCase();
-  if (normalized === 'otp_expired' || normalized === 'access_denied') {
+  if (isRejectedLink(code)) {
     return 'That confirmation link has expired or was already used. Request the change again to get a new one.';
   }
   return "We couldn't finish that link in this browser, but the change may already have gone through. Check the address shown above — if it hasn't changed, request the change again.";
@@ -167,7 +176,11 @@ export function emailChangeReturnNotice(input: {
   currentEmail: string | null;
 }): EmailChangeReturnNotice | null {
   if (!input.returned) return null;
-  if (input.linkError) {
+  // A failed code exchange with nothing left pending is a finished change:
+  // Supabase applied it before handing out the code (a link opened after the
+  // 5-minute flow window lands here). Only a link Supabase rejected, or one
+  // that leaves a change still pending, is worth an error.
+  if (input.linkError && (isRejectedLink(input.linkError) || input.pendingEmail)) {
     return { tone: 'error', message: friendlyEmailChangeLinkError(input.linkError) };
   }
   if (input.pendingEmail) {

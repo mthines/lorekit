@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   EMAIL_CHANGE_RETURN_PATH,
+  isRejectedLink,
   emailChangeOutcome,
   emailChangeReturnNotice,
   friendlyEmailChangeError,
@@ -137,6 +138,15 @@ describe('friendlyEmailChangeLinkError', () => {
   });
 });
 
+describe('isRejectedLink', () => {
+  it('is true only for Supabase’s own rejections, in any case', () => {
+    expect(isRejectedLink('otp_expired')).toBe(true);
+    expect(isRejectedLink('ACCESS_DENIED')).toBe(true);
+    expect(isRejectedLink('flow_state_expired')).toBe(false);
+    expect(isRejectedLink('pkce_code_verifier_not_found')).toBe(false);
+  });
+});
+
 describe('emailChangeReturnNotice', () => {
   const base = { returned: true, linkError: null, pendingEmail: null, currentEmail: 'new@example.com' };
 
@@ -144,8 +154,24 @@ describe('emailChangeReturnNotice', () => {
     expect(emailChangeReturnNotice({ ...base, returned: false, linkError: 'otp_expired' })).toBeNull();
   });
 
-  it('reports a failed link as an error', () => {
+  it('reports a link Supabase rejected as an error', () => {
     expect(emailChangeReturnNotice({ ...base, linkError: 'otp_expired' })?.tone).toBe('error');
+    expect(emailChangeReturnNotice({ ...base, linkError: 'access_denied' })?.tone).toBe('error');
+  });
+
+  it('treats a failed code exchange with nothing pending as the finished change it is', () => {
+    // Supabase verified the change before the exchange; a link opened after
+    // the 5-minute flow window comes back as flow_state_expired.
+    expect(emailChangeReturnNotice({ ...base, linkError: 'flow_state_expired' })).toEqual({
+      tone: 'success',
+      message: 'Your email address is now new@example.com.',
+    });
+  });
+
+  it('keeps a failed code exchange an error while a change is still pending', () => {
+    expect(
+      emailChangeReturnNotice({ ...base, linkError: 'flow_state_expired', pendingEmail: 'new@example.com' })?.tone,
+    ).toBe('error');
   });
 
   it('asks for the other link while the change is still pending', () => {
