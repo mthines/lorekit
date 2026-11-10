@@ -82,11 +82,11 @@ export function EmailChangeForm({ user, emailChangeReturn }: EmailChangeFormProp
   const [busy, setBusy] = useState(false);
 
   // Drop `?email_change` / `?error` once read so a reload does not replay the
-  // notice. `history.replaceState`, not `router.replace`: the latter re-renders
-  // the page without the params, and the notice is already in state.
+  // notice. `null` state, as `useUrlState` does: Next's own state skips its URL
+  // sync, so the next `router.refresh()` would put the old query back.
   useEffect(() => {
     if (!emailChangeReturn.returned && !emailChangeReturn.linkError) return;
-    window.history.replaceState(window.history.state, '', `${EMAIL_CHANGE_PAGE_PATH}${window.location.hash}`);
+    window.history.replaceState(null, '', `${EMAIL_CHANGE_PAGE_PATH}${window.location.hash}`);
   }, [emailChangeReturn.returned, emailChangeReturn.linkError]);
 
   function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
