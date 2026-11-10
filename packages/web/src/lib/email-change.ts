@@ -6,21 +6,31 @@
  * `supabase.auth.updateUser({ email }, { emailRedirectTo })` records the new
  * address as `user.new_email` and emails a confirmation link — to the new
  * address, and also to the current one when the project has "Secure email
- * change" on (Supabase's default, `double_confirm_changes`, which
- * `supabase/config.toml` leaves untouched). The address only changes once
- * every link is opened; the link lands on
- * `/api/auth/callback` (which already verifies `email_change`) and then back
- * on `/settings/user`. So this module only has to validate the input and
- * translate failures into copy — there is no LoreKit-side state to keep.
+ * change" on AND "Confirm email" on (GoTrue skips the second confirmation when
+ * email auto-confirm is enabled). The address only changes once every link is
+ * opened. Each link goes through `/api/auth/callback` (which already verifies
+ * `email_change`) and returns to {@link EMAIL_CHANGE_RETURN_PATH}. So this
+ * module only validates input, classifies the result, and translates failures
+ * into copy — there is no LoreKit-side state to keep.
  *
  * Import-free apart from the shared auth-error mapping, so it stays
  * unit-testable in the node vitest environment.
  */
 
-import { friendlyAuthError, type AuthErrorLike } from './auth-errors';
+import { friendlySettingsUpdateError, type AuthErrorLike } from './auth-errors';
 
-/** Where the confirmation link returns to after `/api/auth/callback` verifies it. */
-export const EMAIL_CHANGE_RETURN_PATH = '/settings/user';
+/** The settings page the email form lives on. */
+export const EMAIL_CHANGE_PAGE_PATH = '/settings/user';
+
+/**
+ * Query flag the confirmation link returns with, so the page can tell "I just
+ * came back from a link" from a plain visit. The callback keeps `next`'s query
+ * string and appends `error=<code>` to it when the link failed.
+ */
+export const EMAIL_CHANGE_RETURN_PARAM = 'email_change';
+
+/** The `next` path handed to `/api/auth/callback` for an email change. */
+export const EMAIL_CHANGE_RETURN_PATH = `${EMAIL_CHANGE_PAGE_PATH}?${EMAIL_CHANGE_RETURN_PARAM}=1`;
 
 export type EmailChangeValidation = { ok: true; value: string } | { ok: false; error: string };
 
@@ -50,23 +60,43 @@ export function validateEmailChange(
   return { ok: true, value };
 }
 
+/** Structural subset of the `User` Supabase returns from `updateUser`. */
+export interface EmailChangeUser {
+  email?: string | undefined;
+  new_email?: string | undefined;
+}
+
+export type EmailChangeOutcome = { kind: 'applied' } | { kind: 'pending'; pendingEmail: string };
+
+/**
+ * What a successful `updateUser({ email })` call did.
+ *
+ * Normally `pending`: the address waits in `new_email` until confirmed.
+ * Current GoTrue only applies an email change immediately for anonymous users,
+ * which LoreKit does not have, so `applied` is defensive — it keeps the form
+ * from claiming a change is pending when the returned user says it is done.
+ */
+export function emailChangeOutcome(
+  returnedUser: EmailChangeUser | null | undefined,
+  requested: string,
+): EmailChangeOutcome {
+  if (returnedUser?.email && returnedUser.email.toLowerCase() === requested.toLowerCase()) {
+    return { kind: 'applied' };
+  }
+  // `||`, not `??`: an empty `new_email` means nothing is pending.
+  return { kind: 'pending', pendingEmail: returnedUser?.new_email || requested };
+}
+
 /**
  * Translate a failed `updateUser({ email })` call into copy for the settings
  * form.
  *
- * Differs from `friendlyAuthError` in two places, both because the sign-in
- * wording is wrong here rather than for any new policy:
- *
- * - **An address that belongs to another account is named as such.** Sign-up
- *   hides this to avoid an account-enumeration oracle, but that reasoning does
- *   not carry over: this caller is already authenticated and rate-limited, and
- *   Supabase's own `email_exists` response is visible to them in the browser's
- *   network panel whatever the copy says. Hiding it would only leave them
- *   waiting for an email that is never sent.
- * - **Rate limits and expired sessions talk about this action**, not about
- *   "sign-in attempts" or "requesting a new link".
- *
- * Everything else falls through to `friendlyAuthError`.
+ * An address that belongs to another account is named as such. Sign-up hides
+ * this to avoid an account-enumeration oracle, but that reasoning does not
+ * carry over: this caller is already authenticated and rate-limited, and
+ * Supabase's own `email_exists` response is visible to them in the browser's
+ * network panel whatever the copy says. Hiding it would only leave them
+ * waiting for an email that is never sent.
  */
 export function friendlyEmailChangeError(error: AuthErrorLike): string {
   const msg = error.message.toLowerCase();
@@ -85,49 +115,71 @@ export function friendlyEmailChangeError(error: AuthErrorLike): string {
     return "That email address can't be used. Try a different one.";
   }
 
-  if (
-    code === 'over_email_send_rate_limit' ||
-    code === 'over_request_rate_limit' ||
-    msg.includes('rate limit') ||
-    error.status === 429
-  ) {
+  if (code === 'over_email_send_rate_limit') {
     return 'Too many email change requests. Wait a few minutes and try again.';
   }
 
-  if (code === 'session_not_found' || msg.includes('auth session missing')) {
-    return 'Your session has expired. Sign in again, then retry the change.';
-  }
-
-  return friendlyAuthError(error);
+  return friendlySettingsUpdateError(error);
 }
 
 /**
- * Copy for a confirmation link that came back as `?error=<code>` on
- * `/settings/user` — `/api/auth/callback` forwards both a Supabase-rejected
- * link and a failed code exchange that way.
+ * Copy for a confirmation link that came back with `?error=<code>`.
+ *
+ * Two different failures arrive this way, and they mean opposite things:
+ *
+ * - **Supabase rejected the link** (`otp_expired`, `access_denied`): nothing
+ *   changed, so the user should request the change again.
+ * - **The code exchange after it failed** (`flow_state_expired` — the PKCE
+ *   flow state lives 5 minutes from the request, so any link opened later hits
+ *   it — `flow_state_not_found`, `pkce_code_verifier_not_found` for a link
+ *   opened in another browser, and anything else): Supabase verifies the
+ *   change BEFORE it hands out the code, so the address has most likely
+ *   changed already and only the follow-up sign-in in this browser failed.
+ *   Telling the user it "didn't work" would send them to retry a change that
+ *   is done.
  *
  * Only ever returns fixed copy chosen by the code; the raw query value is
  * never echoed into the page.
  */
 export function friendlyEmailChangeLinkError(code: string): string {
   const normalized = code.toLowerCase();
-
-  // A PKCE exchange fails when the link is opened in a different browser from
-  // the one the change was requested in. Supabase has already confirmed the
-  // address by the time it redirects (verification happens before the code is
-  // handed out), so the change may well have gone through — only the
-  // follow-up sign-in in this browser failed.
-  if (
-    normalized === 'flow_state_not_found' ||
-    normalized === 'pkce_code_verifier_not_found' ||
-    normalized === 'bad_code_verifier'
-  ) {
-    return 'That confirmation link was opened in a different browser. The change may still have gone through — the address shown above is your current one.';
-  }
-
   if (normalized === 'otp_expired' || normalized === 'access_denied') {
     return 'That confirmation link has expired or was already used. Request the change again to get a new one.';
   }
+  return "We couldn't finish that link in this browser, but the change may already have gone through. Check the address shown above — if it hasn't changed, request the change again.";
+}
 
-  return "That confirmation link didn't work. Request the change again to get a new one.";
+export type EmailChangeReturnNotice = { tone: 'error' | 'info' | 'success'; message: string };
+
+/**
+ * What to tell a user who just came back from a confirmation link, or `null`
+ * for a plain visit.
+ *
+ * Read from the user's own state rather than from the link: with secure email
+ * change on, the first link leaves `new_email` set (one more to open) and the
+ * last one clears it (done). Requires the return flag, so a hand-typed
+ * `/settings/user?error=…` shows nothing.
+ */
+export function emailChangeReturnNotice(input: {
+  returned: boolean;
+  linkError: string | null;
+  pendingEmail: string | null;
+  currentEmail: string | null;
+}): EmailChangeReturnNotice | null {
+  if (!input.returned) return null;
+  if (input.linkError) {
+    return { tone: 'error', message: friendlyEmailChangeLinkError(input.linkError) };
+  }
+  if (input.pendingEmail) {
+    return {
+      tone: 'info',
+      message: 'Link confirmed. To finish, open the confirmation link sent to your other address.',
+    };
+  }
+  return {
+    tone: 'success',
+    message: input.currentEmail
+      ? `Your email address is now ${input.currentEmail}.`
+      : 'Your email address has been updated.',
+  };
 }

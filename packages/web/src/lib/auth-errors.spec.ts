@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { friendlyAuthError } from './auth-errors';
+import { friendlyAuthError, friendlySettingsUpdateError } from './auth-errors';
 import { MIN_PASSWORD_LENGTH } from './password-policy';
 
 describe('friendlyAuthError', () => {
@@ -134,5 +134,24 @@ describe('friendlyAuthError', () => {
 
   it('is a total function for an empty message', () => {
     expect(friendlyAuthError({ message: '' })).toBe('');
+  });
+});
+
+describe('friendlySettingsUpdateError', () => {
+  it('asks a signed-in user to sign in again, not to request a link', () => {
+    const byCode = friendlySettingsUpdateError({ message: 'Session not found', code: 'session_not_found' });
+    expect(byCode).toContain('Sign in again');
+    expect(friendlySettingsUpdateError({ message: 'Auth session missing!' })).toBe(byCode);
+  });
+
+  it('talks about changes, not sign-in attempts, when rate limited', () => {
+    const message = friendlySettingsUpdateError({ message: 'Request rate limit reached', status: 429 });
+    expect(message).toContain('Too many changes');
+    expect(message.toLowerCase()).not.toContain('sign-in');
+  });
+
+  it('defers to friendlyAuthError for everything else', () => {
+    const error = { message: 'something unexpected' };
+    expect(friendlySettingsUpdateError(error)).toBe(friendlyAuthError(error));
   });
 });

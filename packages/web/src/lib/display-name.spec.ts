@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   DISPLAY_NAME_MAX_LENGTH,
-  DISPLAY_NAME_METADATA_KEY,
-  editableDisplayName,
+  chosenDisplayName,
+  fallbackDisplayName,
   resolveDisplayName,
   validateDisplayName,
 } from './display-name';
@@ -17,11 +17,13 @@ describe('resolveDisplayName', () => {
     ).toBe('Jane');
   });
 
-  it('writes to a key GitHub sign-in never sends, so a GitHub login cannot overwrite it', () => {
-    // GitHub identity data carries `full_name` and `name`; GoTrue merges it into
-    // user_metadata on every sign-in. The chosen name must live elsewhere.
-    expect(DISPLAY_NAME_METADATA_KEY).not.toBe('full_name');
-    expect(DISPLAY_NAME_METADATA_KEY).not.toBe('name');
+  it('falls back when a chosen name was cleared to null', () => {
+    // GoTrue deletes a key set to null on an existing metadata object, but
+    // stores the update verbatim when user_metadata was empty — so a literal
+    // null can reach the reader.
+    expect(
+      resolveDisplayName({ email: 'jane@example.com', user_metadata: { display_name: null, full_name: 'Jane Doe' } }),
+    ).toBe('Jane Doe');
   });
 
   it('falls back to full_name, then email, then "User"', () => {
@@ -46,15 +48,20 @@ describe('resolveDisplayName', () => {
   });
 });
 
-describe('editableDisplayName', () => {
-  it('starts the field from display_name, then full_name', () => {
-    expect(editableDisplayName({ user_metadata: { display_name: 'Jane', full_name: 'Jane Doe' } })).toBe('Jane');
-    expect(editableDisplayName({ user_metadata: { full_name: 'Jane Doe' } })).toBe('Jane Doe');
+describe('chosenDisplayName', () => {
+  it('holds only the name the user chose, never the GitHub name', () => {
+    expect(chosenDisplayName({ user_metadata: { display_name: ' Jane ', full_name: 'Jane Doe' } })).toBe('Jane');
+    // An empty field must mean "use the default", so the default is not prefilled.
+    expect(chosenDisplayName({ user_metadata: { full_name: 'Jane Doe' } })).toBe('');
+    expect(chosenDisplayName({ email: 'jane@example.com' })).toBe('');
   });
+});
 
-  it('never prefills the email address as a name', () => {
-    expect(editableDisplayName({ email: 'jane@example.com', user_metadata: {} })).toBe('');
-    expect(editableDisplayName({ email: 'jane@example.com' })).toBe('');
+describe('fallbackDisplayName', () => {
+  it('ignores the chosen name and returns full_name, then email, then "User"', () => {
+    expect(fallbackDisplayName({ user_metadata: { display_name: 'Jane', full_name: 'Jane Doe' } })).toBe('Jane Doe');
+    expect(fallbackDisplayName({ email: 'jane@example.com', user_metadata: {} })).toBe('jane@example.com');
+    expect(fallbackDisplayName({})).toBe('User');
   });
 });
 

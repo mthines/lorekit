@@ -1105,7 +1105,10 @@ Every authentication surface in the dashboard emits a discrete RUM event through
 
 `auth.method` is one of `github_oauth`, `email_password`, `email_password_signup`,
 `email_otp`, `email_confirmation`, `password_reset_request`,
-`password_reset_complete`, `password_change_settings`.
+`password_reset_complete`, `password_change_settings`, `email_change_settings`.
+`email_change_settings` (Settings → User, `EmailChangeForm.tsx`) emits
+`auth.pending` rather than `auth.success` when the request succeeds, because the
+address only changes once the emailed link is opened.
 
 ### Signing up vs signing in
 
@@ -1119,7 +1122,7 @@ takes a reader who already knows that `email_password_signup` is registration an
 | `login` | `email_password` |
 | `login_or_signup` | `github_oauth`, `email_otp` |
 | `recovery` | `password_reset_request`, `password_reset_complete` |
-| `account_management` | `password_change_settings` |
+| `account_management` | `password_change_settings`, `email_change_settings` |
 
 `login_or_signup` is not a hedge. Both of those paths create an account when
 there is none and sign the visitor in when there is, and **the browser cannot

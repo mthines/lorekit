@@ -4,6 +4,7 @@ import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 import { UserSettingsPanel } from '@/components/settings/UserSettingsPanel';
 import { PasswordPanel } from '@/components/settings/PasswordPanel';
+import { EMAIL_CHANGE_RETURN_PARAM } from '@/lib/email-change';
 
 export const metadata: Metadata = { title: 'User — Settings' };
 
@@ -17,9 +18,13 @@ export default async function UserSettingsPage({ searchParams }: UserSettingsPag
   if (!user) return null;
 
   // An email-change confirmation link returns here through
-  // `/api/auth/callback`, which appends `?error=<code>` when the link failed.
-  // Only the code travels on; `EmailChangeForm` maps it to fixed copy.
-  const emailLinkError = typeof params['error'] === 'string' ? params['error'] : null;
+  // `/api/auth/callback` as `?email_change=1`, plus `&error=<code>` when the
+  // link failed. Only the code travels on; `EmailChangeForm` maps it to fixed
+  // copy and never renders it.
+  const emailChangeReturn = {
+    returned: params[EMAIL_CHANGE_RETURN_PARAM] === '1',
+    linkError: typeof params['error'] === 'string' ? params['error'] : null,
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -29,7 +34,7 @@ export default async function UserSettingsPage({ searchParams }: UserSettingsPag
         title="User"
         subtitle="Your name, your email address, and danger-zone actions."
       >
-        <UserSettingsPanel user={user} emailLinkError={emailLinkError} />
+        <UserSettingsPanel user={user} emailChangeReturn={emailChangeReturn} />
       </SectionPanel>
 
       {/*

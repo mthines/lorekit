@@ -11,7 +11,7 @@ import { registerClick } from '@/lib/click-gesture';
 import { toggleDeveloperNavRevealed } from '@/lib/hooks/useDeveloperNavRevealed';
 import { Button } from '@/components/ui/Button';
 import { DisplayNameForm } from './DisplayNameForm';
-import { EmailChangeForm } from './EmailChangeForm';
+import { EmailChangeForm, type EmailChangeReturn } from './EmailChangeForm';
 
 /**
  * 5 consecutive clicks (within 2s of each other) toggles the developer nav's
@@ -27,8 +27,8 @@ const REVEAL_CLICK_WINDOW_MS = 2000;
 
 interface UserSettingsPanelProps {
   user: User;
-  /** `?error=` from a failed email-change confirmation link — see `EmailChangeForm`. */
-  emailLinkError?: string | null;
+  /** What an email-change confirmation link brought back — see `EmailChangeForm`. */
+  emailChangeReturn?: EmailChangeReturn;
 }
 
 /**
@@ -37,7 +37,12 @@ interface UserSettingsPanelProps {
  * display name and change their email address, then surfaces Sign out and
  * Delete account as explicit actions.
  */
-export function UserSettingsPanel({ user, emailLinkError = null }: UserSettingsPanelProps) {
+const NO_EMAIL_CHANGE_RETURN: EmailChangeReturn = { returned: false, linkError: null };
+
+export function UserSettingsPanel({
+  user,
+  emailChangeReturn = NO_EMAIL_CHANGE_RETURN,
+}: UserSettingsPanelProps) {
   const router = useRouter();
   const [signOutLoading, setSignOutLoading] = useState(false);
   const [deleteStep, setDeleteStep] = useState<'idle' | 'confirm' | 'deleting'>('idle');
@@ -137,7 +142,7 @@ export function UserSettingsPanel({ user, emailLinkError = null }: UserSettingsP
       {/* ── Profile ────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-5">
         <DisplayNameForm user={user} />
-        <EmailChangeForm user={user} linkError={emailLinkError} />
+        <EmailChangeForm user={user} emailChangeReturn={emailChangeReturn} />
       </div>
 
       {/* ── Divider ────────────────────────────────────────────────────── */}

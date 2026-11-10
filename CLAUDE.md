@@ -439,6 +439,7 @@ their rationale inline. **Do not relitigate these.**
 - **Docs are a PUBLIC MDX section at `/docs`** — [rationale](./docs/decisions.md#docs-are-a-public-mdx-section-at-docs)
 - **Settings sections named for the user's goal** — [rationale](./docs/decisions.md#settings-sections-named-for-the-users-goal)
 - **The chosen display name lives in `user_metadata.display_name`, never `full_name`** (GitHub sign-in rewrites `full_name` every time; read it through `resolveDisplayName`) — [rationale](./docs/decisions.md#the-chosen-display-name-lives-in-user_metadatadisplay_name-never-full_name)
+- **Email changes are Supabase Auth's double-confirm flow — hosted "Secure email change" AND "Confirm email" must both stay on** (with auto-confirm, one link to the new address completes it) — [rationale](./docs/decisions.md#email-changes-use-supabase-auths-confirmation-flow-and-rely-on-two-hosted-settings)
 - **Org REST routes open to `lk_*` tokens, gated by token permission not auth tier** — [rationale](./docs/decisions.md#org-rest-routes-open-to-lk_-tokens-gated-by-token-permission)
 - **Org-owned lore archive/hard-delete over REST** — [rationale](./docs/decisions.md#org-owned-lore-archivehard-delete-over-rest)
 - **Usage analytics answer record-level questions** — [rationale](./docs/decisions.md#usage-analytics-answer-record-level-questions)

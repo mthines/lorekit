@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { MailCheck } from 'lucide-react';
@@ -13,51 +13,79 @@ import {
   reportAuthSuccess,
 } from '@/lib/auth-telemetry';
 import {
+  EMAIL_CHANGE_PAGE_PATH,
   EMAIL_CHANGE_RETURN_PATH,
+  emailChangeOutcome,
+  emailChangeReturnNotice,
   friendlyEmailChangeError,
-  friendlyEmailChangeLinkError,
   validateEmailChange,
+  type EmailChangeReturnNotice,
 } from '@/lib/email-change';
 import { Button } from '@/components/ui/Button';
 import { SETTINGS_INPUT_CLASS, SETTINGS_LABEL_CLASS } from './form-styles';
 
-interface EmailChangeFormProps {
-  user: User;
-  /**
-   * The `?error=` code `/api/auth/callback` appended when a confirmation link
-   * failed, or `null`. Mapped to fixed copy — never rendered raw.
-   */
+/** What the confirmation link brought back in the URL — see `settings/user/page.tsx`. */
+export interface EmailChangeReturn {
+  /** The page was reached through a confirmation link (`?email_change=1`). */
+  returned: boolean;
+  /** The `?error=` code the callback appended, or `null`. Never rendered raw. */
   linkError: string | null;
 }
+
+interface EmailChangeFormProps {
+  user: User;
+  emailChangeReturn: EmailChangeReturn;
+}
+
+const NOTICE_TONE_CLASS: Record<EmailChangeReturnNotice['tone'], string> = {
+  error: 'text-red-400',
+  info: 'text-[var(--color-content-secondary)]',
+  success: 'text-[var(--color-success)]',
+};
 
 /**
  * The change-email field in Settings → User.
  *
  * Hands the whole confirmation flow to Supabase Auth (see `lib/email-change.ts`):
  * `updateUser({ email })` stores the address as `user.new_email` and emails the
- * confirmation link(s); opening them goes through `/api/auth/callback` and back
- * here. Until then the account keeps its current address, so the form shows
- * the pending address rather than pretending the change is done.
- *
- * A project that auto-confirms email changes applies the address immediately;
- * that is detected from the returned user and reported as done.
+ * confirmation link(s); each link goes through `/api/auth/callback` and back
+ * here with `?email_change=1`. Until every link is opened the account keeps
+ * its current address, so the form shows the pending address rather than
+ * pretending the change is done.
  */
-export function EmailChangeForm({ user, linkError }: EmailChangeFormProps) {
+export function EmailChangeForm({ user, emailChangeReturn }: EmailChangeFormProps) {
   const router = useRouter();
   const inputId = useId();
   const hintId = useId();
   const errorId = useId();
+  const noticeId = useId();
+  const formRef = useRef<HTMLFormElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const currentEmail = user.email ?? null;
   const [email, setEmail] = useState('');
-  const [pendingEmail, setPendingEmail] = useState<string | null>(
-    // `||`, not `??`: an empty string means no change is pending.
-    user.new_email || null,
+  // `||`, not `??`: an empty `new_email` means nothing is pending.
+  const [pendingEmail, setPendingEmail] = useState<string | null>(user.new_email || null);
+  // Captured once, from the URL the confirmation link landed on.
+  const [notice, setNotice] = useState(() =>
+    emailChangeReturnNotice({
+      ...emailChangeReturn,
+      pendingEmail: user.new_email || null,
+      currentEmail,
+    }),
   );
-  const [showLinkError, setShowLinkError] = useState(!!linkError);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Drop `?email_change` / `?error` from the address bar once read, so a
+  // reload or Back does not replay a notice that has already been shown.
+  // `history.replaceState` rather than `router.replace`: the latter re-renders
+  // the page without the params, and the notice is already in state.
+  useEffect(() => {
+    if (!emailChangeReturn.returned && !emailChangeReturn.linkError) return;
+    window.history.replaceState(window.history.state, '', `${EMAIL_CHANGE_PAGE_PATH}${window.location.hash}`);
+  }, [emailChangeReturn.returned, emailChangeReturn.linkError]);
 
   function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
     setEmail(event.target.value);
@@ -69,7 +97,7 @@ export function EmailChangeForm({ user, linkError }: EmailChangeFormProps) {
     event.preventDefault();
     setError('');
     setSuccess('');
-    setShowLinkError(false);
+    setNotice(null);
 
     const result = validateEmailChange(email, currentEmail);
     if (!result.ok) {
@@ -79,48 +107,61 @@ export function EmailChangeForm({ user, linkError }: EmailChangeFormProps) {
 
     setBusy(true);
     reportAuthAttempt('email_change_settings');
-    const supabase = createClient();
-    const { data, error: updateError } = await supabase.auth.updateUser(
-      { email: result.value },
-      { emailRedirectTo: buildAuthCallbackUrl(authCallbackOrigin(), EMAIL_CHANGE_RETURN_PATH) },
-    );
-    setBusy(false);
+    try {
+      const supabase = createClient();
+      const { data, error: updateError } = await supabase.auth.updateUser(
+        { email: result.value },
+        { emailRedirectTo: buildAuthCallbackUrl(authCallbackOrigin(), EMAIL_CHANGE_RETURN_PATH) },
+      );
 
-    if (updateError) {
-      reportAuthFailure('email_change_settings', updateError);
-      setError(friendlyEmailChangeError(updateError));
-      return;
-    }
+      if (updateError) {
+        reportAuthFailure('email_change_settings', updateError);
+        setError(friendlyEmailChangeError(updateError));
+        return;
+      }
 
-    setEmail('');
-    if (data.user?.email && data.user.email.toLowerCase() === result.value.toLowerCase()) {
-      reportAuthSuccess('email_change_settings');
-      setPendingEmail(null);
-      setSuccess('Email address updated.');
-    } else {
-      reportAuthPending('email_change_settings');
-      setPendingEmail(data.user?.new_email || result.value);
+      setEmail('');
+      const outcome = emailChangeOutcome(data.user, result.value);
+      if (outcome.kind === 'applied') {
+        reportAuthSuccess('email_change_settings');
+        setPendingEmail(null);
+        setSuccess('Email address updated.');
+      } else {
+        reportAuthPending('email_change_settings');
+        setPendingEmail(outcome.pendingEmail);
+        setSuccess('Confirmation link sent.');
+      }
+      router.refresh();
+    } catch (err) {
+      reportAuthFailure('email_change_settings', err instanceof Error ? err : null);
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setBusy(false);
+      // Disabling the button while sending drops keyboard focus to <body>;
+      // put it back on the field so the next Tab starts from here.
+      if (!formRef.current?.contains(document.activeElement)) inputRef.current?.focus();
     }
-    router.refresh();
   }
 
+  const describedBy = [notice ? noticeId : null, hintId, error ? errorId : null]
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-1.5">
-      {showLinkError && linkError && (
-        <p role="alert" className="mb-1.5 text-xs text-red-400">
-          {friendlyEmailChangeLinkError(linkError)}
+    <form ref={formRef} onSubmit={handleSubmit} noValidate className="flex flex-col gap-1.5">
+      {notice && (
+        <p
+          id={noticeId}
+          role={notice.tone === 'error' ? 'alert' : 'status'}
+          className={`mb-1.5 text-xs ${NOTICE_TONE_CLASS[notice.tone]}`}
+        >
+          {notice.message}
         </p>
       )}
 
       {pendingEmail && (
-        <div
-          role="status"
-          className="mb-1.5 flex gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3"
-        >
-          <MailCheck
-            className="mt-0.5 size-4 shrink-0 text-[var(--color-accent)]"
-            aria-hidden
-          />
+        <div className="mb-1.5 flex gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3">
+          <MailCheck className="mt-0.5 size-4 shrink-0 text-[var(--color-accent)]" aria-hidden />
           <div className="min-w-0 text-xs text-[var(--color-content-secondary)]">
             <p>
               Waiting for you to confirm{' '}
@@ -143,6 +184,7 @@ export function EmailChangeForm({ user, linkError }: EmailChangeFormProps) {
       </label>
       <div className="flex flex-col gap-2 sm:flex-row">
         <input
+          ref={inputRef}
           id={inputId}
           name="new-email"
           type="email"
@@ -150,11 +192,11 @@ export function EmailChangeForm({ user, linkError }: EmailChangeFormProps) {
           autoComplete="email"
           autoCapitalize="none"
           spellCheck={false}
-          aria-describedby={error ? `${hintId} ${errorId}` : hintId}
+          aria-describedby={describedBy}
           aria-invalid={error ? true : undefined}
           value={email}
           onChange={handleChange}
-          disabled={busy}
+          readOnly={busy}
           className={`${SETTINGS_INPUT_CLASS} sm:flex-1`}
         />
         <Button
@@ -178,11 +220,10 @@ export function EmailChangeForm({ user, linkError }: EmailChangeFormProps) {
           {error}
         </p>
       )}
-      {success && (
-        <p role="status" className="text-xs text-[var(--color-success)]">
-          {success}
-        </p>
-      )}
+      {/* Always mounted, so screen readers announce the text when it appears. */}
+      <div role="status" className="text-xs text-[var(--color-success)]">
+        {success}
+      </div>
     </form>
   );
 }

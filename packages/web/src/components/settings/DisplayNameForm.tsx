@@ -1,13 +1,14 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
-import { friendlyAuthError } from '@/lib/auth-errors';
+import { friendlySettingsUpdateError } from '@/lib/auth-errors';
 import {
   DISPLAY_NAME_METADATA_KEY,
-  editableDisplayName,
+  chosenDisplayName,
+  fallbackDisplayName,
   validateDisplayName,
 } from '@/lib/display-name';
 import { Button } from '@/components/ui/Button';
@@ -22,8 +23,9 @@ interface DisplayNameFormProps {
  *
  * Writes `user_metadata.display_name` through `supabase.auth.updateUser`, never
  * `full_name` — GitHub sign-in rewrites `full_name` every time, see
- * `lib/display-name.ts`. An empty field deletes the key, which falls the shown
- * name back to the GitHub name or the email address.
+ * `lib/display-name.ts`. The field holds only the name the user chose; the
+ * fallback (GitHub name or email) is its placeholder, so an empty field
+ * visibly means "use the default". Saving it empty deletes the key.
  *
  * `router.refresh()` after a save re-renders the server layout, whose
  * `getVerifiedUser()` reads the user fresh from Supabase Auth — that is what
@@ -34,9 +36,11 @@ export function DisplayNameForm({ user }: DisplayNameFormProps) {
   const inputId = useId();
   const hintId = useId();
   const errorId = useId();
+  const formRef = useRef<HTMLFormElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // What is stored now, to tell an edit from an untouched field.
-  const [saved, setSaved] = useState(() => editableDisplayName(user));
+  const [saved, setSaved] = useState(() => chosenDisplayName(user));
   const [name, setName] = useState(saved);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -62,42 +66,52 @@ export function DisplayNameForm({ user }: DisplayNameFormProps) {
     }
 
     setBusy(true);
-    const supabase = createClient();
-    const { data, error: updateError } = await supabase.auth.updateUser({
-      data: { [DISPLAY_NAME_METADATA_KEY]: result.value },
-    });
-    setBusy(false);
+    try {
+      const supabase = createClient();
+      const { data, error: updateError } = await supabase.auth.updateUser({
+        data: { [DISPLAY_NAME_METADATA_KEY]: result.value },
+      });
 
-    if (updateError) {
-      setError(friendlyAuthError(updateError));
-      return;
+      if (updateError) {
+        setError(friendlySettingsUpdateError(updateError));
+        return;
+      }
+
+      const stored = data.user ? chosenDisplayName(data.user) : (result.value ?? '');
+      setSaved(stored);
+      setName(stored);
+      setSuccess(
+        stored ? 'Name saved.' : 'Name cleared. Your GitHub name or email address is shown instead.',
+      );
+      router.refresh();
+    } catch {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setBusy(false);
+      // Disabling the button while saving drops keyboard focus to <body>;
+      // put it back on the field so the next Tab starts from here.
+      if (!formRef.current?.contains(document.activeElement)) inputRef.current?.focus();
     }
-
-    // Read the stored value back rather than echoing the input: clearing the
-    // field falls back to `full_name`, and the field should show that.
-    const stored = data.user ? editableDisplayName(data.user) : (result.value ?? '');
-    setSaved(stored);
-    setName(stored);
-    setSuccess(result.value ? 'Name saved.' : 'Name cleared. Your default name is shown instead.');
-    router.refresh();
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-1.5">
+    <form ref={formRef} onSubmit={handleSubmit} className="flex flex-col gap-1.5">
       <label htmlFor={inputId} className={SETTINGS_LABEL_CLASS}>
         Display name
       </label>
       <div className="flex flex-col gap-2 sm:flex-row">
         <input
+          ref={inputRef}
           id={inputId}
           name="display-name"
           type="text"
           autoComplete="name"
+          placeholder={fallbackDisplayName(user)}
           aria-describedby={error ? `${hintId} ${errorId}` : hintId}
           aria-invalid={error ? true : undefined}
           value={name}
           onChange={handleChange}
-          disabled={busy}
+          readOnly={busy}
           className={`${SETTINGS_INPUT_CLASS} sm:flex-1`}
         />
         <Button
@@ -121,11 +135,10 @@ export function DisplayNameForm({ user }: DisplayNameFormProps) {
           {error}
         </p>
       )}
-      {success && (
-        <p role="status" className="text-xs text-[var(--color-success)]">
-          {success}
-        </p>
-      )}
+      {/* Always mounted, so screen readers announce the text when it appears. */}
+      <div role="status" className="text-xs text-[var(--color-success)]">
+        {success}
+      </div>
     </form>
   );
 }

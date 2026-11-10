@@ -1,9 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import {
+  EMAIL_CHANGE_RETURN_PATH,
+  emailChangeOutcome,
+  emailChangeReturnNotice,
   friendlyEmailChangeError,
   friendlyEmailChangeLinkError,
   validateEmailChange,
 } from './email-change';
+import { safeNextPath } from './auth-redirect';
+
+describe('EMAIL_CHANGE_RETURN_PATH', () => {
+  it('survives the callback’s same-origin check unchanged, query flag included', () => {
+    expect(safeNextPath(EMAIL_CHANGE_RETURN_PATH)).toBe(EMAIL_CHANGE_RETURN_PATH);
+    expect(EMAIL_CHANGE_RETURN_PATH).toBe('/settings/user?email_change=1');
+  });
+});
 
 describe('validateEmailChange', () => {
   it('returns the trimmed address', () => {
@@ -34,19 +45,45 @@ describe('validateEmailChange', () => {
   });
 });
 
+describe('emailChangeOutcome', () => {
+  it('is pending while the new address waits in new_email', () => {
+    expect(emailChangeOutcome({ email: 'old@example.com', new_email: 'new@example.com' }, 'new@example.com')).toEqual(
+      { kind: 'pending', pendingEmail: 'new@example.com' },
+    );
+  });
+
+  it('falls back to the requested address when new_email is empty or absent', () => {
+    expect(emailChangeOutcome({ email: 'old@example.com', new_email: '' }, 'new@example.com')).toEqual({
+      kind: 'pending',
+      pendingEmail: 'new@example.com',
+    });
+    expect(emailChangeOutcome(null, 'new@example.com')).toEqual({
+      kind: 'pending',
+      pendingEmail: 'new@example.com',
+    });
+  });
+
+  it('is applied when the returned user already carries the new address', () => {
+    expect(emailChangeOutcome({ email: 'new@example.com' }, 'New@Example.com')).toEqual({ kind: 'applied' });
+  });
+});
+
 describe('friendlyEmailChangeError', () => {
   it('says plainly when the address belongs to another account', () => {
-    const message = friendlyEmailChangeError({
+    const byCode = friendlyEmailChangeError({
       message: 'A user with this email address has already been registered',
       code: 'email_exists',
       status: 422,
     });
-    expect(message).toContain('already used by another LoreKit account');
+    expect(byCode).toContain('already used by another LoreKit account');
     // Not the sign-up copy, which would send the user to an inbox that never gets an email.
-    expect(message.toLowerCase()).not.toContain('check your inbox');
+    expect(byCode.toLowerCase()).not.toContain('check your inbox');
+    expect(friendlyEmailChangeError({ message: 'User already registered', code: 'user_already_exists' })).toBe(
+      byCode,
+    );
   });
 
-  it('talks about email changes, not sign-in attempts, when rate limited', () => {
+  it('talks about email changes, not sign-in attempts, when the email send limit is hit', () => {
     const message = friendlyEmailChangeError({
       message: 'email rate limit exceeded',
       code: 'over_email_send_rate_limit',
@@ -57,6 +94,9 @@ describe('friendlyEmailChangeError', () => {
   });
 
   it('asks the user to sign in again when the session is gone', () => {
+    expect(friendlyEmailChangeError({ message: 'Session not found', code: 'session_not_found' })).toContain(
+      'Sign in again',
+    );
     expect(friendlyEmailChangeError({ message: 'Auth session missing!' })).toContain('Sign in again');
   });
 
@@ -72,21 +112,52 @@ describe('friendlyEmailChangeError', () => {
 });
 
 describe('friendlyEmailChangeLinkError', () => {
-  it('explains a link opened in another browser without claiming the change failed', () => {
-    const message = friendlyEmailChangeLinkError('pkce_code_verifier_not_found');
-    expect(message).toContain('different browser');
-    expect(message).toContain('may still have gone through');
-    expect(friendlyEmailChangeLinkError('flow_state_not_found')).toBe(message);
+  it('maps a link Supabase rejected to a request-again message', () => {
+    expect(friendlyEmailChangeLinkError('otp_expired')).toContain('expired or was already used');
+    expect(friendlyEmailChangeLinkError('access_denied')).toContain('expired or was already used');
+    expect(friendlyEmailChangeLinkError('OTP_EXPIRED')).toContain('expired or was already used');
   });
 
-  it('maps expired or reused links to a request-again message', () => {
-    expect(friendlyEmailChangeLinkError('otp_expired')).toContain('expired');
-    expect(friendlyEmailChangeLinkError('access_denied')).toContain('expired');
+  it('never claims a failed code exchange undid the change — Supabase verifies before the exchange', () => {
+    for (const code of [
+      'flow_state_expired',
+      'flow_state_not_found',
+      'pkce_code_verifier_not_found',
+      'bad_code_verifier',
+      'auth_failed',
+    ]) {
+      const message = friendlyEmailChangeLinkError(code);
+      expect(message).toContain('may already have gone through');
+      expect(message.toLowerCase()).not.toContain("didn't work");
+    }
   });
 
   it('never echoes an unknown code back into the page', () => {
-    const message = friendlyEmailChangeLinkError('<script>alert(1)</script>');
-    expect(message).not.toContain('<script>');
-    expect(message).toContain("didn't work");
+    expect(friendlyEmailChangeLinkError('<script>alert(1)</script>')).not.toContain('<script>');
+  });
+});
+
+describe('emailChangeReturnNotice', () => {
+  const base = { returned: true, linkError: null, pendingEmail: null, currentEmail: 'new@example.com' };
+
+  it('shows nothing on a plain visit, even with a stray ?error', () => {
+    expect(emailChangeReturnNotice({ ...base, returned: false, linkError: 'otp_expired' })).toBeNull();
+  });
+
+  it('reports a failed link as an error', () => {
+    expect(emailChangeReturnNotice({ ...base, linkError: 'otp_expired' })?.tone).toBe('error');
+  });
+
+  it('asks for the other link while the change is still pending', () => {
+    const notice = emailChangeReturnNotice({ ...base, pendingEmail: 'new@example.com', currentEmail: 'old@example.com' });
+    expect(notice?.tone).toBe('info');
+    expect(notice?.message).toContain('other address');
+  });
+
+  it('confirms the new address once nothing is pending', () => {
+    expect(emailChangeReturnNotice(base)).toEqual({
+      tone: 'success',
+      message: 'Your email address is now new@example.com.',
+    });
   });
 });

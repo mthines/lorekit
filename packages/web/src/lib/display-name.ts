@@ -47,26 +47,29 @@ export function firstNonBlank(...candidates: Array<unknown>): string | null {
 }
 
 /**
- * The name to show for `user`: their chosen name, else the provider's
- * `full_name`, else their email address, else the literal `'User'`.
- *
- * Total — every input yields a non-empty string.
+ * The name shown when the user has not chosen one: the provider's
+ * `full_name`, else their email address, else the literal `'User'`. The name
+ * field uses it as its placeholder, so an empty field visibly means "this".
  */
-export function resolveDisplayName(user: DisplayNameUser): string {
-  const metadata = user.user_metadata ?? {};
-  return (
-    firstNonBlank(metadata[DISPLAY_NAME_METADATA_KEY], metadata['full_name'], user.email) ?? 'User'
-  );
+export function fallbackDisplayName(user: DisplayNameUser): string {
+  return firstNonBlank(user.user_metadata?.['full_name'], user.email) ?? 'User';
 }
 
 /**
- * The value the name field starts with: the chosen name, else the provider's
- * `full_name`, else empty. Never the email address — prefilling the field with
- * it would invite saving the address as a "name".
+ * The name the user chose in Settings → User, trimmed, or `''` when they have
+ * not chosen one. This — not the fallback — is what the name field holds, so
+ * clearing and saving leaves it visibly empty instead of refilling it.
  */
-export function editableDisplayName(user: DisplayNameUser): string {
-  const metadata = user.user_metadata ?? {};
-  return firstNonBlank(metadata[DISPLAY_NAME_METADATA_KEY], metadata['full_name']) ?? '';
+export function chosenDisplayName(user: DisplayNameUser): string {
+  return firstNonBlank(user.user_metadata?.[DISPLAY_NAME_METADATA_KEY]) ?? '';
+}
+
+/**
+ * The name to show for `user`: their chosen name, else
+ * {@link fallbackDisplayName}. Total — every input yields a non-empty string.
+ */
+export function resolveDisplayName(user: DisplayNameUser): string {
+  return chosenDisplayName(user) || fallbackDisplayName(user);
 }
 
 export type DisplayNameValidation =
