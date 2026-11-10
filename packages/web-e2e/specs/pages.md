@@ -155,8 +155,11 @@ preconditions:
 flow:
   - WHEN page loads
     THEN {role: "heading", name: "User"} is visible
-    AND {label: "Display name"} is visible
+    AND {label: "Display name"} is not visible
+  - WHEN {role: "button", name: "Edit"} is clicked
+    THEN {label: "Display name"} is visible
     AND {label: "New email address"} is visible
+    AND {role: "button", name: "Close"} is visible
 
 ## Spec 22: The tutorials index forwards to its doc
 url: /tutorials
