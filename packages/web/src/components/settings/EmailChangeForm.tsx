@@ -11,6 +11,7 @@ import {
   reportAuthFailure,
   reportAuthPending,
   reportAuthSuccess,
+  type AuthMethod,
 } from '@/lib/auth-telemetry';
 import {
   EMAIL_CHANGE_PAGE_PATH,
@@ -36,6 +37,8 @@ interface EmailChangeFormProps {
   user: User;
   emailChangeReturn: EmailChangeReturn;
 }
+
+const AUTH_METHOD: AuthMethod = 'email_change_settings';
 
 const NOTICE_TONE_CLASS: Record<EmailChangeReturnNotice['tone'], string> = {
   error: 'text-red-400',
@@ -78,9 +81,8 @@ export function EmailChangeForm({ user, emailChangeReturn }: EmailChangeFormProp
   const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Drop `?email_change` / `?error` from the address bar once read, so a
-  // reload or Back does not replay a notice that has already been shown.
-  // `history.replaceState` rather than `router.replace`: the latter re-renders
+  // Drop `?email_change` / `?error` once read so a reload does not replay the
+  // notice. `history.replaceState`, not `router.replace`: the latter re-renders
   // the page without the params, and the notice is already in state.
   useEffect(() => {
     if (!emailChangeReturn.returned && !emailChangeReturn.linkError) return;
@@ -106,34 +108,34 @@ export function EmailChangeForm({ user, emailChangeReturn }: EmailChangeFormProp
     }
 
     setBusy(true);
-    reportAuthAttempt('email_change_settings');
+    reportAuthAttempt(AUTH_METHOD);
     try {
       const supabase = createClient();
-      const { data, error: updateError } = await supabase.auth.updateUser(
+      const { data: updated, error: updateError } = await supabase.auth.updateUser(
         { email: result.value },
         { emailRedirectTo: buildAuthCallbackUrl(authCallbackOrigin(), EMAIL_CHANGE_RETURN_PATH) },
       );
 
       if (updateError) {
-        reportAuthFailure('email_change_settings', updateError);
+        reportAuthFailure(AUTH_METHOD, updateError);
         setError(friendlyEmailChangeError(updateError));
         return;
       }
 
       setEmail('');
-      const outcome = emailChangeOutcome(data.user, result.value);
+      const outcome = emailChangeOutcome(updated.user, result.value);
       if (outcome.kind === 'applied') {
-        reportAuthSuccess('email_change_settings');
+        reportAuthSuccess(AUTH_METHOD);
         setPendingEmail(null);
         setSuccess('Email address updated.');
       } else {
-        reportAuthPending('email_change_settings');
+        reportAuthPending(AUTH_METHOD);
         setPendingEmail(outcome.pendingEmail);
         setSuccess('Confirmation link sent.');
       }
       router.refresh();
     } catch (err) {
-      reportAuthFailure('email_change_settings', err instanceof Error ? err : null);
+      reportAuthFailure(AUTH_METHOD, err instanceof Error ? err : null);
       setError('Something went wrong. Please try again.');
     } finally {
       setBusy(false);

@@ -16,6 +16,8 @@ import {
 import { Button } from '@/components/ui/Button';
 import { SETTINGS_INPUT_CLASS, SETTINGS_LABEL_CLASS } from './form-styles';
 
+const SAVED_EVENT = 'settings.display_name_saved';
+
 interface DisplayNameFormProps {
   user: User;
 }
@@ -70,13 +72,13 @@ export function DisplayNameForm({ user }: DisplayNameFormProps) {
     setBusy(true);
     try {
       const supabase = createClient();
-      const { data, error: updateError } = await supabase.auth.updateUser({
+      const { data: updated, error: updateError } = await supabase.auth.updateUser({
         data: { [DISPLAY_NAME_METADATA_KEY]: result.value },
       });
 
       if (updateError) {
         track({
-          name: 'settings.display_name_saved',
+          name: SAVED_EVENT,
           outcome: 'error',
           cleared: result.value === null,
           errorCode: authErrorCode(updateError),
@@ -85,9 +87,9 @@ export function DisplayNameForm({ user }: DisplayNameFormProps) {
         return;
       }
 
-      track({ name: 'settings.display_name_saved', outcome: 'success', cleared: result.value === null });
+      track({ name: SAVED_EVENT, outcome: 'success', cleared: result.value === null });
 
-      const stored = data.user ? chosenDisplayName(data.user) : (result.value ?? '');
+      const stored = updated.user ? chosenDisplayName(updated.user) : (result.value ?? '');
       setSaved(stored);
       setName(stored);
       setSuccess(
@@ -96,7 +98,7 @@ export function DisplayNameForm({ user }: DisplayNameFormProps) {
       router.refresh();
     } catch (err) {
       track({
-        name: 'settings.display_name_saved',
+        name: SAVED_EVENT,
         outcome: 'error',
         cleared: result.value === null,
         errorCode: authErrorCode(err instanceof Error ? err : null),

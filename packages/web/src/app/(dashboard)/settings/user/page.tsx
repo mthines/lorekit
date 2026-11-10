@@ -17,10 +17,9 @@ export default async function UserSettingsPage({ searchParams }: UserSettingsPag
 
   if (!user) return null;
 
-  // An email-change confirmation link returns here through
-  // `/api/auth/callback` as `?email_change=1`, plus `&error=<code>` when the
-  // link failed. Only the code travels on; `EmailChangeForm` maps it to fixed
-  // copy and never renders it.
+  // A confirmation link returns via `/api/auth/callback` as `?email_change=1`
+  // (+ `&error=<code>` on failure). Only the code travels on;
+  // `EmailChangeForm` maps it to fixed copy and never renders it.
   const emailChangeReturn = {
     returned: params[EMAIL_CHANGE_RETURN_PARAM] === '1',
     linkError: typeof params['error'] === 'string' ? params['error'] : null,

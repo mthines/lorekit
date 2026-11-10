@@ -176,10 +176,9 @@ export function emailChangeReturnNotice(input: {
   currentEmail: string | null;
 }): EmailChangeReturnNotice | null {
   if (!input.returned) return null;
-  // A failed code exchange with nothing left pending is a finished change:
-  // Supabase applied it before handing out the code (a link opened after the
-  // 5-minute flow window lands here). Only a link Supabase rejected, or one
-  // that leaves a change still pending, is worth an error.
+  // A failed code exchange with nothing pending is a finished change: Supabase
+  // applied it before handing out the code (e.g. a link opened after the
+  // 5-minute flow window). Only a rejection, or a still-pending change, errors.
   if (input.linkError && (isRejectedLink(input.linkError) || input.pendingEmail)) {
     return { tone: 'error', message: friendlyEmailChangeLinkError(input.linkError) };
   }
