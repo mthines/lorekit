@@ -1256,7 +1256,7 @@ way to surface before, and the one a misconfigured DNS record on the sending
 domain trips first.
 
 The funnel is `auth.attempt` minus `auth.success`, grouped by `auth.method` — for
-every method that emits both. Three do not, in different directions, so read
+every method that emits both. Four do not, in different directions, so read
 those rows differently:
 
 - `github_oauth` emits an attempt and never a success, so its subtraction is
@@ -1275,8 +1275,14 @@ those rows differently:
   `pending` on its own — compared against `email_confirmation` successes on
   `/welcome` — as the signal for a mailer that accepted the signup and never
   delivered it.
+- `email_change_settings` (Settings → User) emits an attempt, then `auth.pending`
+  when Supabase accepts the request — the address only changes once the
+  emailed link is opened, in a later document — so read it as
+  `attempt − pending − failure`, never `attempt − success`. Its `auth.success`
+  fires only if Supabase applies the change immediately, which current GoTrue
+  does for anonymous users alone.
 
-Two paths deliberately emit no `auth.success`:
+Three paths deliberately emit no `auth.success`:
 
 - **GitHub OAuth** — success is a redirect to a new document, so the page that
   would report it is already gone. Arrival at the destination is the evidence.
@@ -1287,6 +1293,10 @@ Two paths deliberately emit no `auth.success`:
   both cases, preserving that symmetry) — see `reportAuthPending` in
   `lib/auth-telemetry.ts`. That path completes as `email_confirmation` on
   `/welcome`.
+- **The email-change request** (`EmailChangeForm.tsx`) — the account still has
+  its old address until the confirmation link is opened, so it emits
+  `auth.pending`. Completion is visible on the return to `/settings/user`, not
+  as a browser auth event.
 
 > **These used to be signal attributes, and must never go back to being any.**
 > The surfaces previously called `addSignalAttribute('auth.method', …)`, which
