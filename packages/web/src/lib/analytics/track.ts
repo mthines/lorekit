@@ -402,7 +402,7 @@ export type AnalyticsEvent =
     }
   | { name: 'insights.scope_opened'; scopeType: ScopeSelectionType; source: InsightsScopeSource }
   | { name: 'insights.recall_flow_view_changed'; view: 'chart' | 'table' }
-  // ── Feature flags ─────────────────────────────────────────────────────────
+  // ── Settings ──────────────────────────────────────────────────────────────
   | {
       name: 'settings.display_name_saved';
       outcome: SettingsSaveOutcome;
@@ -415,6 +415,7 @@ export type AnalyticsEvent =
        */
       errorCode?: string;
     }
+  // ── Feature flags ─────────────────────────────────────────────────────────
   | {
       name: 'feature_flag.exposed';
       flagKey: FlagKey;
@@ -653,6 +654,8 @@ function toAttributes(event: AnalyticsEvent): Record<string, AttributeValue> {
       };
     case 'insights.recall_flow_view_changed':
       return { 'lorekit.insights.recall_flow.view': event.view };
+
+    // ── Settings ────────────────────────────────────────────────────────────
     case 'settings.display_name_saved': {
       const attrs: Record<string, AttributeValue> = {
         'lorekit.settings.display_name.outcome': event.outcome,
