@@ -1088,6 +1088,16 @@ uses the same three. Every RUM signal additionally carries
 `feature_flag.<flagKey>` (variant) and `lorekit.feature_flag.reason.<flagKey>`;
 see `docs/feature-flags.md` § Running an experiment.
 
+### Settings (`settings.*`)
+
+| Event | Emitted when | Attributes |
+|-------|--------------|------------|
+| `settings.display_name_saved` | Settings → User saved the display name (`DisplayNameForm.tsx`), on success and on failure | `lorekit.settings.display_name.outcome` (`success`/`error`), `.cleared` (the field was saved empty), `.error_code` (failures only — `authErrorCode`'s bounded Supabase code, never the message) |
+
+The email change on the same page is an auth flow and reports through the
+`auth.*` events below (`auth.method = email_change_settings`); the password
+form does too (`password_change_settings`).
+
 ---
 
 ## Browser auth events (`auth.*`)

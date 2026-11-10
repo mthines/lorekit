@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
 import { friendlySettingsUpdateError } from '@/lib/auth-errors';
+import { authErrorCode } from '@/lib/auth-telemetry';
+import { track } from '@/lib/analytics/track';
 import {
   DISPLAY_NAME_METADATA_KEY,
   chosenDisplayName,
@@ -73,9 +75,17 @@ export function DisplayNameForm({ user }: DisplayNameFormProps) {
       });
 
       if (updateError) {
+        track({
+          name: 'settings.display_name_saved',
+          outcome: 'error',
+          cleared: result.value === null,
+          errorCode: authErrorCode(updateError),
+        });
         setError(friendlySettingsUpdateError(updateError));
         return;
       }
+
+      track({ name: 'settings.display_name_saved', outcome: 'success', cleared: result.value === null });
 
       const stored = data.user ? chosenDisplayName(data.user) : (result.value ?? '');
       setSaved(stored);
@@ -84,7 +94,13 @@ export function DisplayNameForm({ user }: DisplayNameFormProps) {
         stored ? 'Name saved.' : 'Name cleared. Your GitHub name or email address is shown instead.',
       );
       router.refresh();
-    } catch {
+    } catch (err) {
+      track({
+        name: 'settings.display_name_saved',
+        outcome: 'error',
+        cleared: result.value === null,
+        errorCode: authErrorCode(err instanceof Error ? err : null),
+      });
       setError('Something went wrong. Please try again.');
     } finally {
       setBusy(false);

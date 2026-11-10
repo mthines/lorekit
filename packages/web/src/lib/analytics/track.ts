@@ -65,6 +65,11 @@
  * - `insights.scope_opened`            — a row handed off to the Explorer.
  * - `insights.recall_flow_view_changed` — the visual page's recall flow swapped between chart and table.
  *
+ * ### Settings (`settings.*`)
+ * - `settings.display_name_saved`      — Settings → User saved (or cleared) the display
+ *                                        name, with the outcome and, on failure, the
+ *                                        bounded Supabase error code.
+ *
  * ### Feature flags (`feature_flag.*`)
  * - `feature_flag.exposed`             — a user reached a surface a flag gates, in either arm.
  *   An experiment's population: count it by variant AND reason, and drop
@@ -192,6 +197,9 @@ export type LandingPlacement = 'header' | 'hero' | 'get-started';
 
 /** The live demo's use-case tabs, by stable id (never the visible label). */
 export type LandingDemoTab = 'self-healing' | 'promotion' | 'pr-review';
+
+/** Whether a Settings save reached Supabase Auth and was accepted. */
+export type SettingsSaveOutcome = 'success' | 'error';
 
 /** Discriminated union of every tracked event. Add new events here. */
 export type AnalyticsEvent =
@@ -395,6 +403,18 @@ export type AnalyticsEvent =
   | { name: 'insights.scope_opened'; scopeType: ScopeSelectionType; source: InsightsScopeSource }
   | { name: 'insights.recall_flow_view_changed'; view: 'chart' | 'table' }
   // ── Feature flags ─────────────────────────────────────────────────────────
+  | {
+      name: 'settings.display_name_saved';
+      outcome: SettingsSaveOutcome;
+      /** The field was saved empty, deleting the chosen name — a different act from naming yourself. */
+      cleared: boolean;
+      /**
+       * On an error only: Supabase's `code` (else the error's `name`), as
+       * `authErrorCode` bounds it. Never the message, which is prose and can
+       * carry what the user typed.
+       */
+      errorCode?: string;
+    }
   | {
       name: 'feature_flag.exposed';
       flagKey: FlagKey;
@@ -633,6 +653,14 @@ function toAttributes(event: AnalyticsEvent): Record<string, AttributeValue> {
       };
     case 'insights.recall_flow_view_changed':
       return { 'lorekit.insights.recall_flow.view': event.view };
+    case 'settings.display_name_saved': {
+      const attrs: Record<string, AttributeValue> = {
+        'lorekit.settings.display_name.outcome': event.outcome,
+        'lorekit.settings.display_name.cleared': String(event.cleared),
+      };
+      if (event.errorCode) attrs['lorekit.settings.display_name.error_code'] = event.errorCode;
+      return attrs;
+    }
     case 'feature_flag.exposed':
       return {
         'feature_flag.key': event.flagKey,
