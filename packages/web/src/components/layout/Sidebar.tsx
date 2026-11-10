@@ -8,6 +8,7 @@ import { BookOpen, Settings, GraduationCap, Telescope } from 'lucide-react';
 import { CommandPaletteFab } from '@/components/command/CommandPaletteFab';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
 import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
+import { resolveDisplayName } from '@/lib/display-name';
 
 // Primary content nav — 3 entries, within the mobile tab bar's 3–5 item
 // guideline. Insights sits alongside Explorer/Getting-started as the single
@@ -60,7 +61,7 @@ export function Sidebar({ user }: SidebarProps) {
   const mobileTabsBeforeFab = mobileTabs.slice(0, 2);
   const mobileTabsAfterFab = mobileTabs.slice(2);
 
-  const displayName = (user.user_metadata?.['full_name'] as string) ?? user.email ?? 'User';
+  const displayName = resolveDisplayName(user);
   const avatarUrl = user.user_metadata?.['avatar_url'] as string | undefined;
 
   return (

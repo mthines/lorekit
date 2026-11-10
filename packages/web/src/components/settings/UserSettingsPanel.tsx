@@ -6,9 +6,12 @@ import type { User } from '@supabase/supabase-js';
 import { LogOut, Trash2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { isDeveloperEmail } from '@/lib/developer-users';
+import { resolveDisplayName } from '@/lib/display-name';
 import { registerClick } from '@/lib/click-gesture';
 import { toggleDeveloperNavRevealed } from '@/lib/hooks/useDeveloperNavRevealed';
 import { Button } from '@/components/ui/Button';
+import { DisplayNameForm } from './DisplayNameForm';
+import { EmailChangeForm } from './EmailChangeForm';
 
 /**
  * 5 consecutive clicks (within 2s of each other) toggles the developer nav's
@@ -24,20 +27,23 @@ const REVEAL_CLICK_WINDOW_MS = 2000;
 
 interface UserSettingsPanelProps {
   user: User;
+  /** `?error=` from a failed email-change confirmation link — see `EmailChangeForm`. */
+  emailLinkError?: string | null;
 }
 
 /**
  * Client component rendered inside the /settings/user SectionPanel.
- * Shows the signed-in user's avatar, name, and email, then surfaces
- * Sign out and Delete account as explicit actions.
+ * Shows the signed-in user's avatar, name, and email, lets them edit their
+ * display name and change their email address, then surfaces Sign out and
+ * Delete account as explicit actions.
  */
-export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
+export function UserSettingsPanel({ user, emailLinkError = null }: UserSettingsPanelProps) {
   const router = useRouter();
   const [signOutLoading, setSignOutLoading] = useState(false);
   const [deleteStep, setDeleteStep] = useState<'idle' | 'confirm' | 'deleting'>('idle');
   const [deleteError, setDeleteError] = useState('');
 
-  const displayName = (user.user_metadata?.['full_name'] as string) ?? user.email ?? 'User';
+  const displayName = resolveDisplayName(user);
   const avatarUrl = user.user_metadata?.['avatar_url'] as string | undefined;
   const email = user.email;
 
@@ -126,6 +132,12 @@ export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
             <p className="truncate text-xs text-[var(--color-content-secondary)]">{email}</p>
           )}
         </div>
+      </div>
+
+      {/* ── Profile ────────────────────────────────────────────────────── */}
+      <div className="flex flex-col gap-5">
+        <DisplayNameForm user={user} />
+        <EmailChangeForm user={user} linkError={emailLinkError} />
       </div>
 
       {/* ── Divider ────────────────────────────────────────────────────── */}

@@ -7,10 +7,19 @@ import { PasswordPanel } from '@/components/settings/PasswordPanel';
 
 export const metadata: Metadata = { title: 'User — Settings' };
 
-export default async function UserSettingsPage() {
-  const user = await getVerifiedUser();
+interface UserSettingsPageProps {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+export default async function UserSettingsPage({ searchParams }: UserSettingsPageProps) {
+  const [user, params] = await Promise.all([getVerifiedUser(), searchParams]);
 
   if (!user) return null;
+
+  // An email-change confirmation link returns here through
+  // `/api/auth/callback`, which appends `?error=<code>` when the link failed.
+  // Only the code travels on; `EmailChangeForm` maps it to fixed copy.
+  const emailLinkError = typeof params['error'] === 'string' ? params['error'] : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -18,9 +27,9 @@ export default async function UserSettingsPage() {
         anchorId="account"
         icon={<UserCircle className="size-4.5" />}
         title="User"
-        subtitle="Your account info and danger-zone actions."
+        subtitle="Your name, your email address, and danger-zone actions."
       >
-        <UserSettingsPanel user={user} />
+        <UserSettingsPanel user={user} emailLinkError={emailLinkError} />
       </SectionPanel>
 
       {/*

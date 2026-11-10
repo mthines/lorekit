@@ -23,6 +23,11 @@ describe('resolveAuditActor', () => {
     });
   });
 
+  it('prefers the name chosen in Settings → User over full_name', () => {
+    const user = buildUser({ display_name: 'Jane', full_name: 'Jane Doe' });
+    expect(resolveAuditActor(user)).toEqual({ kind: 'user', name: 'Jane', avatarUrl: null });
+  });
+
   it('falls back to email when full_name is absent', () => {
     const user = buildUser({}, 'jane@example.com');
     expect(resolveAuditActor(user)).toEqual({

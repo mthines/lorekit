@@ -15,21 +15,13 @@
  */
 
 import type { User } from '@supabase/supabase-js';
+import { firstNonBlank, resolveDisplayName } from './display-name';
 
 export type AuditActor =
   | { kind: 'user'; name: string; avatarUrl: string | null }
   | { kind: 'system'; name: string };
 
 const SYSTEM_ACTOR: AuditActor = { kind: 'system', name: 'System' };
-
-function firstNonBlank(...candidates: Array<unknown>): string | null {
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'string') continue;
-    const trimmed = candidate.trim();
-    if (trimmed) return trimmed;
-  }
-  return null;
-}
 
 /**
  * Resolve the display actor for the current session user.
@@ -41,7 +33,9 @@ function firstNonBlank(...candidates: Array<unknown>): string | null {
 export function resolveAuditActor(user: User | null): AuditActor {
   if (!user) return SYSTEM_ACTOR;
 
-  const name = firstNonBlank(user.user_metadata?.['full_name'], user.email) ?? 'User';
+  // The same name the Sidebar and Settings → User show: a chosen
+  // `display_name`, then `full_name`, then the email — see `display-name.ts`.
+  const name = resolveDisplayName(user);
   const avatarUrl = firstNonBlank(user.user_metadata?.['avatar_url']);
 
   return { kind: 'user', name, avatarUrl };
