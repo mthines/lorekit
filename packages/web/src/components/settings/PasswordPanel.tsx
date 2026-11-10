@@ -3,7 +3,7 @@
 import { useId, useState } from 'react';
 import { Eye, EyeOff, KeyRound } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { friendlyAuthError } from '@/lib/auth-errors';
+import { friendlySettingsUpdateError } from '@/lib/auth-errors';
 import { reportAuthAttempt, reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
 import { MIN_PASSWORD_LENGTH, validatePasswordConfirmation } from '@/lib/password-policy';
 import { Button } from '@/components/ui/Button';
@@ -73,7 +73,7 @@ export function PasswordPanel() {
     setBusy(false);
     if (updateError) {
       reportAuthFailure('password_change_settings', updateError);
-      setError(friendlyAuthError(updateError));
+      setError(friendlySettingsUpdateError(updateError));
       return;
     }
     reportAuthSuccess('password_change_settings');
