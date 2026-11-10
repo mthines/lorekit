@@ -438,6 +438,7 @@ their rationale inline. **Do not relitigate these.**
 - **Invite-details modal** — [rationale](./docs/decisions.md#invite-details-modal)
 - **Docs are a PUBLIC MDX section at `/docs`** — [rationale](./docs/decisions.md#docs-are-a-public-mdx-section-at-docs)
 - **Settings sections named for the user's goal** — [rationale](./docs/decisions.md#settings-sections-named-for-the-users-goal)
+- **The chosen display name lives in `user_metadata.display_name`, never `full_name`** (GitHub sign-in rewrites `full_name` every time; read it through `resolveDisplayName`) — [rationale](./docs/decisions.md#the-chosen-display-name-lives-in-user_metadatadisplay_name-never-full_name)
 - **Org REST routes open to `lk_*` tokens, gated by token permission not auth tier** — [rationale](./docs/decisions.md#org-rest-routes-open-to-lk_-tokens-gated-by-token-permission)
 - **Org-owned lore archive/hard-delete over REST** — [rationale](./docs/decisions.md#org-owned-lore-archivehard-delete-over-rest)
 - **Usage analytics answer record-level questions** — [rationale](./docs/decisions.md#usage-analytics-answer-record-level-questions)

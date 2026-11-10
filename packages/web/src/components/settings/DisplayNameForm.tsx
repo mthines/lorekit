@@ -33,6 +33,7 @@ export function DisplayNameForm({ user }: DisplayNameFormProps) {
   const router = useRouter();
   const inputId = useId();
   const hintId = useId();
+  const errorId = useId();
 
   // What is stored now, to tell an edit from an untouched field.
   const [saved, setSaved] = useState(() => editableDisplayName(user));
@@ -92,7 +93,7 @@ export function DisplayNameForm({ user }: DisplayNameFormProps) {
           name="display-name"
           type="text"
           autoComplete="name"
-          aria-describedby={hintId}
+          aria-describedby={error ? `${hintId} ${errorId}` : hintId}
           aria-invalid={error ? true : undefined}
           value={name}
           onChange={handleChange}
@@ -116,7 +117,7 @@ export function DisplayNameForm({ user }: DisplayNameFormProps) {
         address.
       </p>
       {error && (
-        <p role="alert" className="text-xs text-red-400">
+        <p id={errorId} role="alert" className="text-xs text-red-400">
           {error}
         </p>
       )}

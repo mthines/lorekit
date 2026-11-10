@@ -46,10 +46,14 @@ export function EmailChangeForm({ user, linkError }: EmailChangeFormProps) {
   const router = useRouter();
   const inputId = useId();
   const hintId = useId();
+  const errorId = useId();
 
   const currentEmail = user.email ?? null;
   const [email, setEmail] = useState('');
-  const [pendingEmail, setPendingEmail] = useState<string | null>(user.new_email ?? null);
+  const [pendingEmail, setPendingEmail] = useState<string | null>(
+    // `||`, not `??`: an empty string means no change is pending.
+    user.new_email || null,
+  );
   const [showLinkError, setShowLinkError] = useState(!!linkError);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -95,7 +99,7 @@ export function EmailChangeForm({ user, linkError }: EmailChangeFormProps) {
       setSuccess('Email address updated.');
     } else {
       reportAuthPending('email_change_settings');
-      setPendingEmail(data.user?.new_email ?? result.value);
+      setPendingEmail(data.user?.new_email || result.value);
     }
     router.refresh();
   }
@@ -146,7 +150,7 @@ export function EmailChangeForm({ user, linkError }: EmailChangeFormProps) {
           autoComplete="email"
           autoCapitalize="none"
           spellCheck={false}
-          aria-describedby={hintId}
+          aria-describedby={error ? `${hintId} ${errorId}` : hintId}
           aria-invalid={error ? true : undefined}
           value={email}
           onChange={handleChange}
@@ -170,7 +174,7 @@ export function EmailChangeForm({ user, linkError }: EmailChangeFormProps) {
         address for email sign-in afterwards — GitHub sign-in keeps working.
       </p>
       {error && (
-        <p role="alert" className="text-xs text-red-400">
+        <p id={errorId} role="alert" className="text-xs text-red-400">
           {error}
         </p>
       )}
