@@ -282,6 +282,13 @@ export function createRouter(routes: Route[], functionName: string) {
         'auth.type': usageAuthType(resolved.auth),
         ...(usageUserId !== null ? { 'auth.user_id': usageUserId } : {}),
       });
+      // ...and on the HANDLER span (`lorekit.memories.get/quota`, the write
+      // route, …), which is where handlers stamp what they learned —
+      // `lorekit.memory.count`, `lorekit.write.inserted`. A span-metric backend
+      // groups one span's attributes at a time and cannot join a child to its
+      // root, so the identity has to sit beside those facts for "memories per
+      // user" to be chartable. Same id, same absent-never-empty rule.
+      if (usageUserId !== null) hs.setAttributes({ 'auth.user_id': usageUserId });
 
       // Only from the query string: the router must not consume the request
       // body to peek at a scope, so body-carried scopes report null. Same
