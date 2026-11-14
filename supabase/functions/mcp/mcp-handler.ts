@@ -380,6 +380,14 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
       ? await getUserPlanName(db, analyticsUserId, span)
       : null;
     if (planName) toolSpan.setAttributes({ 'lorekit.plan': planName });
+    // Caller identity on the TOOL span, not only on the root `lorekit.mcp`
+    // span (`mcp/index.ts`). The facts a per-user view needs live HERE —
+    // `lorekit.write.inserted`, `lorekit.memory.count`, `lorekit.source_agent`,
+    // `lorekit.scope.type` — and a span-metric backend cannot join a child
+    // span to its parent, so without the id on this span "new memories per
+    // user" or "memories held per user" is unanswerable without a trace join.
+    // Same id the usage event records; absent, never empty, for service-role.
+    if (analyticsUserId) toolSpan.setAttributes({ 'auth.user_id': analyticsUserId });
 
     // Client-supplied grouping key (same header as the REST surface). Bounded by
     // the pure validator; a malformed value degrades to null, never an error.

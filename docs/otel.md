@@ -87,6 +87,7 @@ Attributes on `lorekit.memory.*` spans:
 | Attribute | Example | Notes |
 |-----------|---------|-------|
 | `lorekit.tool.name` | `memory.write` | Bounded set — safe as metric dimension |
+| `auth.user_id` | `6e05fc90-…` | The caller's Supabase user UUID (pseudonymous), the same id the root request span and `usage_events.user_id` carry. Repeated here — and on the REST handler spans (`lorekit.memories.get/quota`, the write route, …) — because span metrics cannot join a child span to its parent: per-user counts of `lorekit.write.inserted` or `lorekit.memory.count` need the id on the span that holds them. **Omitted** for service-role callers, never empty. Guarded by `mcp-guards/tool-span-user-identity.spec.ts` |
 | `lorekit.scope` | `repo::mthines/gw-tools` | Canonical scope string |
 | `lorekit.scope.type` | `repo` | `global` \| `project` \| `repo` \| `branch` \| `mixed` (a multi-type `memory.search`, or a batch `memory.read` whose `refs` span several scope types) \| `invalid` (ungrammatical input). **Omitted entirely** when the operation carries no scope — never a placeholder. Resolved by the shared `scope-type-attribute.ts`. A batch read names its scopes inside `refs` rather than in a `scope` argument or query string, so MCP resolves them from the parsed refs and REST's handler reports the type to the router through `X-LoreKit-Scope-Type` — see "Scope attribution for body-carried scopes" below |
 | `lorekit.key` | `aw-lessons::worktree-naming` | Lesson key |
