@@ -48,6 +48,7 @@ import {
 } from '@/lib/persisted-preference';
 import { panelWidthCss } from '@/lib/lesson-panel-width';
 import { LessonPanelResizeHandle, type PanelWidthChange } from './LessonPanelResizeHandle';
+import { MemoryConnections } from './MemoryConnections';
 import { shouldDismissSheet } from '@/components/ui/bottom-sheet';
 import { track } from '@/lib/analytics/track';
 import { toast } from 'sonner';
@@ -1379,6 +1380,9 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                     );
                   })()}
                 </section>
+
+                {/* Connections — flag-gated (`memory-graph`); renders nothing when off. */}
+                <MemoryConnections lesson={lesson} />
               </div>
 
               {/* Sticky footer — archive action + save/discard bar */}

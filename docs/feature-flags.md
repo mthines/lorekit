@@ -56,11 +56,11 @@ it can never ship a flag that silently resolves to `undefined`.
 
 > **Every `example-*` key in this document is illustrative, not a real flag.**
 > Grep for one and you will find only this file. The registry holds exactly the
-> flags that gate live behaviour — today four rollout gates, all plain booleans
+> flags that gate live behaviour — today five rollout gates, all plain booleans
 > (`retention-policies` and `insights-visual` default on and are kill switches;
 > `insights-visual` ran a 50/50 experiment first):
 > `retention-policies`, `lore-explorer-instruments`,
-> `lore-explorer-duplicate-clusters` and `insights-visual`. It has also held entries since removed: the
+> `lore-explorer-duplicate-clusters`, `insights-visual` and `memory-graph` (default off). It has also held entries since removed: the
 > rollout gate for the `/insights` route (deleted once that page became
 > unconditional — see docs/decisions.md) and five demonstration entries (an
 > A/B experiment, two unread toggles, and one each to exercise the `string`

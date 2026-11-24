@@ -1653,3 +1653,99 @@ export const UtilityResponseSchema = z.object({
   entries: z.array(UtilityEntrySchema),
 });
 export type UtilityResponse = z.infer<typeof UtilityResponseSchema>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory graph — `GET /memories/:id/neighbours` and `GET /memories/graph`
+// (migration 00122). REST-only dashboard analytics: see `memory.neighbours` /
+// `memory.graph` in `telemetry-vocabulary.ts`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How two lessons are connected.
+ *
+ * - `co_cited`      — credited in the same run (shared `correlation_id`).
+ * - `cited_by`      — a retrospective that credited this lesson.
+ * - `cites`         — a lesson this one (as a retrospective) credited.
+ * - `supersedes` / `superseded_by` — explicit lineage (00119).
+ * - `duplicate`     — near-duplicate wording, from the clustering that powers
+ *                     `GET /memories/clusters`. Computed in the handler, not SQL.
+ */
+export const MemoryEdgeKindSchema = z.enum([
+  'co_cited', 'cited_by', 'cites', 'supersedes', 'superseded_by', 'duplicate',
+]);
+export type MemoryEdgeKind = z.infer<typeof MemoryEdgeKindSchema>;
+
+export const MemoryNeighbourSchema = z.object({
+  kind: MemoryEdgeKindSchema,
+  id: z.string().uuid(),
+  scope: z.string(),
+  key: z.string(),
+  /** Distinct shared runs (`co_cited`), citations (`cites`/`cited_by`), similarity ×100 (`duplicate`), 1 for lineage. */
+  weight: z.number().int().nonnegative(),
+  last_at: z.string().datetime().nullable(),
+});
+export type MemoryNeighbour = z.infer<typeof MemoryNeighbourSchema>;
+
+/** A run this lesson was credited in. `correlation_id` MAY embed a repo/PR identifier. */
+export const MemoryRunRefSchema = z.object({
+  correlation_id: z.string(),
+  session_kind: z.string().nullable(),
+  last_at: z.string().datetime().nullable(),
+  /** How many times the lesson was credited in the run. */
+  cited_count: z.number().int().nonnegative(),
+});
+export type MemoryRunRef = z.infer<typeof MemoryRunRefSchema>;
+
+export const NeighboursQuerySchema = z.object({
+  // `z.coerce` for the `ReadRankingQuerySchema` reason: query values arrive as strings.
+  limit: z.coerce.number().int().min(1).max(50).optional().default(20),
+});
+export type NeighboursQuery = z.infer<typeof NeighboursQuerySchema>;
+
+export const NeighboursResponseSchema = z.object({
+  id: z.string().uuid(),
+  neighbours: z.array(MemoryNeighbourSchema),
+  runs: z.array(MemoryRunRefSchema),
+});
+export type NeighboursResponse = z.infer<typeof NeighboursResponseSchema>;
+
+export const MemoryGraphQuerySchema = z.object({
+  scope: RawScopeSchema.optional(),
+  /** Minimum distinct shared runs for an edge to appear. */
+  min_weight: z.coerce.number().int().min(1).max(50).optional().default(1),
+  limit_nodes: z.coerce.number().int().min(10).max(300).optional().default(150),
+  /** Only co-usage from this instant on. ISO 8601. */
+  since: z.string().datetime().optional(),
+});
+export type MemoryGraphQuery = z.infer<typeof MemoryGraphQuerySchema>;
+
+export const MemoryGraphNodeSchema = z.object({
+  id: z.string().uuid(),
+  scope: z.string(),
+  key: z.string(),
+  read_count: z.number().int().nonnegative(),
+  opened_count: z.number().int().nonnegative(),
+  cited_count: z.number().int().nonnegative(),
+  /** Co-cited neighbours. 0 for an orphan. */
+  degree: z.number().int().nonnegative(),
+  /** Read but never opened or credited, and connected to nothing. */
+  orphan: z.boolean(),
+});
+export type MemoryGraphNode = z.infer<typeof MemoryGraphNodeSchema>;
+
+export const MemoryGraphEdgeSchema = z.object({
+  source: z.string().uuid(),
+  target: z.string().uuid(),
+  /** Distinct runs the two lessons were credited in together. */
+  weight: z.number().int().positive(),
+  last_at: z.string().datetime().nullable(),
+});
+export type MemoryGraphEdge = z.infer<typeof MemoryGraphEdgeSchema>;
+
+export const MemoryGraphResponseSchema = z.object({
+  nodes: z.array(MemoryGraphNodeSchema),
+  edges: z.array(MemoryGraphEdgeSchema),
+  /** True when more lessons were connected than `limit_nodes` returned. */
+  truncated: z.boolean(),
+});
+export type MemoryGraphResponse = z.infer<typeof MemoryGraphResponseSchema>;

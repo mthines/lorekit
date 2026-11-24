@@ -104,6 +104,14 @@ export const NON_CATALOG_OPS: Readonly<Record<string, NonCatalogOp>> = {
     reason: 'Hot/cold lore ranked by memories.read_count (migration 00077) for the dashboard.',
     restOnly: 'Same name-bearing scope-leak surface as memory.tags, for the same absent demand.',
   },
+  'memory.graph': {
+    reason: 'Corpus co-usage graph (lessons credited in the same run) for the Insights Connections panel.',
+    restOnly: 'Same name-bearing scope-leak surface as memory.tags (a node is scope + key), and the same absent demand: a graph is a chart.',
+  },
+  'memory.neighbours': {
+    reason: 'One lesson\u2019s connections (co-cited, lineage, runs) for the detail drawer.',
+    restOnly: 'Same name-bearing surface as memory.graph, and a run\u2019s correlation_id may embed a repo/PR identifier.',
+  },
   'memory.utility': {
     reason:
       'The delivered x chosen grid for the Insights page — where every active lesson sits, plus '

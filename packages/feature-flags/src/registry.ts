@@ -88,6 +88,16 @@ const REGISTRY_INPUT = [
     owner: '@lorekit/web',
     tags: ['dashboard', 'web', 'insights', 'rollout'],
   },
+  {
+    key: 'memory-graph',
+    description:
+      "Memory graph — a 'Connections' section in the lesson detail drawer (the lesson's co-cited neighbours, supersede chain, near-duplicates and the runs it was credited in, drawn as an ego graph) and a corpus-level Connections panel on `/insights` (hubs, clusters and orphans from lessons credited in the same run). Gates both through the `MemoryConnections` and `ConnectionsGraph` resolvers; with it off neither renders and the two routes it reads (`GET /memories/:id/neighbours`, `GET /memories/graph`) are never called. Edges come from the citation ledger (`memory_citations`), so a graph is only as dense as agents' use of `cited` on `memory.write`. DEFAULTS OFF while it is judged on whether it helps grooming; retiring it is the copy-and-suffix removal — promote the `.on` files, delete the `.off` files and the resolvers, drop this entry.",
+    type: 'boolean',
+    variants: { off: false, on: true },
+    defaultVariant: 'off',
+    owner: '@lorekit/web',
+    tags: ['dashboard', 'web', 'lore', 'insights', 'experiment'],
+  },
 ] satisfies unknown[];
 
 function parseRegistry(input: unknown): readonly FlagDefinition[] {

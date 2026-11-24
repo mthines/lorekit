@@ -15,6 +15,10 @@ import type {
   ActivityQuery,
   ActivityResponse,
   ClustersQuery,
+  MemoryGraphQuery,
+  MemoryGraphResponse,
+  NeighboursQuery,
+  NeighboursResponse,
   ClustersResponse,
   FacetsResponse,
   ListFacetsBody,
@@ -440,6 +444,43 @@ export function usageRunsRequest(
   signal?: AbortSignal,
 ): Promise<UsageRunsResponse> {
   return restFetch<UsageRunsResponse>('/memories/usage/runs', {
+    accessToken,
+    query: { ...params },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `GET /memories/:id/neighbours` — one lesson's connections: lessons credited in
+ * the same run, the retrospectives that credited it, its supersede chain, its
+ * near-duplicates, and the runs it was credited in.
+ *
+ * REST-only (`memory.neighbours` in `telemetry-vocabulary.ts`): a dashboard
+ * drill-down, not an agent primitive. A lesson the viewer cannot see is a 404.
+ */
+export function neighboursRequest(
+  accessToken: string,
+  id: string,
+  params: Partial<NeighboursQuery> = {},
+  signal?: AbortSignal,
+): Promise<NeighboursResponse> {
+  return restFetch<NeighboursResponse>(`/memories/${encodeURIComponent(id)}/neighbours`, {
+    accessToken,
+    query: { ...params },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `GET /memories/graph` — the corpus co-usage graph behind the Insights
+ * "Connections" panel. REST-only (`memory.graph`).
+ */
+export function memoryGraphRequest(
+  accessToken: string,
+  params: Partial<MemoryGraphQuery> = {},
+  signal?: AbortSignal,
+): Promise<MemoryGraphResponse> {
+  return restFetch<MemoryGraphResponse>('/memories/graph', {
     accessToken,
     query: { ...params },
     ...(signal ? { signal } : {}),

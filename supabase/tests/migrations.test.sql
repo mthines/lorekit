@@ -61,6 +61,9 @@ values
   -- §120's own account, plus the foreign tenant its visibility assertion needs.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000ae', 'authenticated', 'authenticated', 'lk-mig-ae@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000af', 'authenticated', 'authenticated', 'lk-mig-af@test.local', now(), now()),
+  -- §122's own account, plus the foreign tenant its isolation assertions need.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000f0', 'authenticated', 'authenticated', 'lk-mig-f0@test.local', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000f1', 'authenticated', 'authenticated', 'lk-mig-f1@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -12298,6 +12301,96 @@ begin
   -- and the foreign successor really exists, so the assertion above can fail
   assert exists (select 1 from memories where key = '120-succ-foreign' and supersedes = v_old),
     '120 AC-3b: the foreign successor must exist for AC-3a to mean anything';
+end;
+$$;
+
+
+-- ── 122. memory graph — neighbours + corpus graph (00122) ───────────────────
+-- AC-1: lessons cited in the same run are co_cited, weighted by DISTINCT shared
+--       runs; a lesson cited once in a run with another counts that run once.
+-- AC-2: a foreign tenant's citations never create an edge or a node (the
+--       `user_id` predicate), and a memory the caller cannot see yields nothing.
+-- AC-3: supersedes / superseded_by edges appear; the runs list carries run ids.
+-- AC-4: the corpus graph returns weighted edges, honours min_weight, and flags
+--       read-but-never-used lessons with no edges as orphans.
+do $$
+declare
+  v_me    uuid := '00000000-0000-0000-0000-0000000000f0';
+  v_other uuid := '00000000-0000-0000-0000-0000000000f1';
+  v_a uuid; v_b uuid; v_c uuid; v_d uuid; v_e uuid; v_o uuid;
+  v_n int; v_w int; v_g jsonb;
+begin
+  insert into memories (user_id, scope, key, value) values (v_me, 'global', '122-a', 'v') returning id into v_a;
+  insert into memories (user_id, scope, key, value) values (v_me, 'global', '122-b', 'v') returning id into v_b;
+  insert into memories (user_id, scope, key, value) values (v_me, 'global', '122-c', 'v') returning id into v_c;
+  insert into memories (user_id, scope, key, value) values (v_other, 'global', '122-d', 'v') returning id into v_d;
+  insert into memories (user_id, scope, key, value, supersedes) values (v_me, 'global', '122-e', 'v', v_a) returning id into v_e;
+  insert into memories (user_id, scope, key, value, read_count) values (v_me, 'global', '122-orphan', 'v', 5) returning id into v_o;
+
+  -- run-1: A+B. run-2: A+B+C. A also cited once more in run-3 on its own.
+  insert into memory_citations (user_id, cited_memory_id, correlation_id) values
+    (v_me, v_a, 'run-1'), (v_me, v_b, 'run-1'),
+    (v_me, v_a, 'run-2'), (v_me, v_b, 'run-2'), (v_me, v_c, 'run-2'),
+    (v_me, v_a, 'run-3');
+  -- The foreign tenant credits D and (forged) A in run-1: a missing user_id
+  -- predicate would surface D as A's neighbour.
+  insert into memory_citations (user_id, cited_memory_id, correlation_id) values
+    (v_other, v_d, 'run-1'), (v_other, v_a, 'run-1');
+  -- run-9 is the one that bites: the caller credited B there, the foreign tenant
+  -- credited A. Without the same-owner join, A-B would gain a phantom third run
+  -- (and A a phantom run in its list) — and unlike D, A and B are both visible,
+  -- so the visibility filter cannot mask it.
+  insert into memory_citations (user_id, cited_memory_id, correlation_id) values
+    (v_me, v_b, 'run-9'), (v_other, v_a, 'run-9');
+  -- A citation with NO run cannot be placed in one: no co_cited edge from it.
+  insert into memory_citations (user_id, cited_memory_id, correlation_id) values (v_me, v_c, null);
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', format('{"sub":"%s","role":"authenticated"}', v_me), true);
+
+  -- AC-1
+  select n.weight into v_w from lorekit_memory_neighbours(v_me, v_a, 20, '{}') n
+   where n.kind = 'co_cited' and n.memory_id = v_b;
+  assert v_w = 2, format('122 AC-1a: A and B share two runs, got %s', v_w);
+  select n.weight into v_w from lorekit_memory_neighbours(v_me, v_a, 20, '{}') n
+   where n.kind = 'co_cited' and n.memory_id = v_c;
+  assert v_w = 1, format('122 AC-1b: A and C share one run, got %s', v_w);
+
+  -- AC-2
+  select count(*) into v_n from lorekit_memory_neighbours(v_me, v_a, 20, '{}') n where n.memory_id = v_d;
+  assert v_n = 0, format('122 AC-2a: a foreign tenant''s lesson must never be a neighbour, got %s', v_n);
+  select count(*) into v_n from lorekit_memory_neighbours(v_me, v_d, 20, '{}');
+  assert v_n = 0, format('122 AC-2b: a memory the caller cannot see must yield no rows, got %s', v_n);
+
+  -- AC-3
+  select count(*) into v_n from lorekit_memory_neighbours(v_me, v_a, 20, '{}') n
+   where n.kind = 'superseded_by' and n.memory_id = v_e;
+  assert v_n = 1, format('122 AC-3a: E supersedes A so A must report superseded_by E, got %s', v_n);
+  select count(*) into v_n from lorekit_memory_neighbours(v_me, v_e, 20, '{}') n
+   where n.kind = 'supersedes' and n.memory_id = v_a;
+  assert v_n = 1, format('122 AC-3b: E must report supersedes A, got %s', v_n);
+  select count(*) into v_n from lorekit_memory_neighbours(v_me, v_a, 20, '{}') n
+   where n.kind = 'run';
+  assert v_n = 3, format('122 AC-3c: A was credited in exactly three of the caller''s runs, got %s', v_n);
+
+  -- AC-4
+  v_g := lorekit_memory_graph(v_me, null, 1, 150, null, '{}');
+  assert jsonb_array_length(v_g->'edges') = 3,
+    format('122 AC-4a: A-B, A-C and B-C are three edges, got %s', jsonb_array_length(v_g->'edges'));
+  assert (select (e->>'weight')::int from jsonb_array_elements(v_g->'edges') e
+           where (e->>'source')::uuid in (v_a, v_b) and (e->>'target')::uuid in (v_a, v_b)) = 2,
+    '122 AC-4b: the A-B edge must weigh two runs';
+  assert not exists (select 1 from jsonb_array_elements(v_g->'nodes') nd where (nd->>'id')::uuid = v_d),
+    '122 AC-4c: the foreign tenant''s lesson must not be a node';
+  assert (select (nd->>'orphan')::boolean from jsonb_array_elements(v_g->'nodes') nd where (nd->>'id')::uuid = v_o),
+    '122 AC-4d: a read-but-never-used, unconnected lesson must be an orphan';
+
+  v_g := lorekit_memory_graph(v_me, null, 2, 150, null, '{}');
+  assert jsonb_array_length(v_g->'edges') = 1,
+    format('122 AC-4e: min_weight 2 keeps only the A-B edge, got %s', jsonb_array_length(v_g->'edges'));
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 
