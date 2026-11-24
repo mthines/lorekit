@@ -5,7 +5,7 @@ import { expect, fireEvent, fn, userEvent, waitFor, within } from 'storybook/tes
 import { LessonDetailSheet } from './LessonDetailSheet';
 import type { ContentTab } from './content-tabs';
 import type { LessonEntry } from './LessonCard';
-import { withQueryClient } from '@/mocks/decorators';
+import { withQueryClient, withFeatureFlags } from '@/mocks/decorators';
 import {
   PANEL_KEYBOARD_STEP_PX,
   panelFractionFromWidth,
@@ -118,7 +118,7 @@ const meta: Meta<typeof Harness> = {
     nextjs: { appDirectory: true },
   },
   args: { onClose: fn() },
-  decorators: [withQueryClient],
+  decorators: [withFeatureFlags, withQueryClient],
 };
 
 export default meta;
