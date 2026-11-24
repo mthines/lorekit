@@ -32,7 +32,8 @@ export function useMemoryNeighbours(id: string | null | undefined, enabled = tru
       return neighboursRequest(token, id, {}, signal);
     },
     enabled: enabled && Boolean(id),
-    placeholderData: keepPreviousData,
+    // No placeholderData: the drawer does not remount per lesson, so keeping the
+    // previous lesson's data would draw ITS neighbours around the new focus.
     // Citations land at the end of a run, so a neighbourhood does not change
     // minute to minute.
     staleTime: 120_000,

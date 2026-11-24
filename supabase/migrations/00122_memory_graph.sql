@@ -38,6 +38,18 @@
 create index if not exists memory_citations_user_correlation_cited_idx
   on memory_citations (user_id, correlation_id, cited_memory_id)
   where correlation_id is not null;
+comment on index memory_citations_user_correlation_cited_idx is
+  '00122: covers the co-cited self-join (user_id, correlation_id) -> cited_memory_id without a heap fetch.';
+
+-- The drawer's "cites" lookup filters on citing_memory_id alone, and no index
+-- leads with that column (00107's are keyed on user_id / cited_memory_id), so
+-- without this every Connections expand scans the whole ledger. It also serves
+-- the foreign key's ON DELETE SET NULL.
+create index if not exists memory_citations_citing_idx
+  on memory_citations (citing_memory_id)
+  where citing_memory_id is not null;
+comment on index memory_citations_citing_idx is
+  '00122: serves lorekit_memory_neighbours cites lookup and the citing_memory_id FK cascade.';
 
 -- ── 1. one memory's neighbourhood ────────────────────────────────────────
 create or replace function lorekit_memory_neighbours(
