@@ -72,9 +72,34 @@ export const GRAPH: MemoryGraphResponse = {
     { source: graphId(1), target: graphId(4), weight: 1, last_at: FROZEN_NOW },
   ],
   truncated: false,
+  orphan_total: 2,
 };
 
-export const EMPTY_GRAPH: MemoryGraphResponse = { nodes: [], edges: [], truncated: false };
+export const EMPTY_GRAPH: MemoryGraphResponse = { nodes: [], edges: [], truncated: false, orphan_total: 0 };
+
+/** The server lists at most this many orphans (`lorekit_memory_graph`), whatever the total. */
+export const ORPHAN_LIST_CAP = 40;
+
+/** `count` read-but-unused lessons, most-read first, the way the RPC returns them. */
+function orphanLessons(count: number) {
+  return Array.from({ length: count }, (_, i) =>
+    gn(100 + i, `stale::note-${String(i + 1).padStart(2, '0')}`, i % 3 === 0 ? 'global' : 'repo::mthines/lorekit', {
+      orphan: true, read_count: 90 - i, opened_count: 0, cited_count: 0,
+    }),
+  );
+}
+
+/** Nothing credited together, 212 orphans of which the server lists 40: the empty state this change is about. */
+export const ORPHANS_ONLY_GRAPH: MemoryGraphResponse = {
+  nodes: orphanLessons(ORPHAN_LIST_CAP), edges: [], truncated: false, orphan_total: 212,
+};
+
+/** A connected graph that also has more orphans than the list carries. */
+export const GRAPH_MANY_ORPHANS: MemoryGraphResponse = {
+  ...GRAPH,
+  nodes: [...GRAPH.nodes.filter((n) => !n.orphan), ...orphanLessons(ORPHAN_LIST_CAP)],
+  orphan_total: 212,
+};
 
 export function neighboursHandler(body: NeighboursResponse = NEIGHBOURS, onCall?: () => void) {
   return http.get('*/functions/v1/memories/:id/neighbours', () => {

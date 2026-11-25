@@ -5,7 +5,7 @@ import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import { ConnectionsGraph } from './ConnectionsGraph';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
 import { withFlagVariants, withFrozenClock, withMemorySidebar, withQueryClient } from '@/mocks/decorators';
-import { EMPTY_GRAPH, GRAPH, graphHandler } from '@/mocks/memory-graph';
+import { EMPTY_GRAPH, GRAPH, GRAPH_MANY_ORPHANS, ORPHANS_ONLY_GRAPH, graphHandler } from '@/mocks/memory-graph';
 
 const called = fn().mockName('graphRoute');
 
@@ -77,6 +77,32 @@ export const EmptyExplains: Story = {
   parameters: { msw: { handlers: [...memoryHandlers(), graphHandler(EMPTY_GRAPH)] } },
   play: async ({ canvasElement }) => {
     await expect(await within(canvasElement).findByText(/No lessons were credited together/)).toBeVisible();
+  },
+};
+
+/** No connections but orphans: no graph canvas, a short empty state, and the orphan list with the TRUE total. */
+export const EmptyListsOrphansWithoutCanvas: Story = {
+  parameters: { msw: { handlers: [...memoryHandlers(), graphHandler(ORPHANS_ONLY_GRAPH)] } },
+  play: async ({ canvasElement }) => {
+    const c = within(canvasElement);
+    await expect(await c.findByText(/No lessons were credited together/)).toBeVisible();
+    await expect(c.queryAllByTestId('graph-node')).toHaveLength(0);
+    await expect(canvasElement.querySelector('[role="group"][aria-label^="Co-usage graph"]')).toBeNull();
+    await expect(await c.findByText(/Showing the 40 most read of 212/)).toBeVisible();
+    await expect(c.getByRole('heading', { name: /orphans\s*212/i })).toBeVisible();
+    await expect(c.getAllByRole('button', { name: /read \d+×/ })).toHaveLength(40);
+  },
+};
+
+/** With connections AND more orphans than the list carries, the Orphans lens and footer state the true total. */
+export const OrphansLensStatesTrueTotal: Story = {
+  parameters: { msw: { handlers: [...memoryHandlers(), graphHandler(GRAPH_MANY_ORPHANS)] } },
+  play: async ({ canvasElement }) => {
+    const c = within(canvasElement);
+    const lens = await c.findByRole('radio', { name: /orphans/i });
+    await expect(lens).toHaveTextContent('212');
+    await userEvent.click(lens);
+    await expect(await c.findAllByText(/Showing 40 of 212 orphans/)).not.toHaveLength(0);
   },
 };
 

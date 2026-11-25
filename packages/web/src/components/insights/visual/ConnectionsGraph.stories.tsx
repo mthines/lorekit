@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react';
 import { ConnectionsGraph } from './ConnectionsGraph';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
 import { withFlagVariants, withFrozenClock, withMemorySidebar, withQueryClient } from '@/mocks/decorators';
-import { EMPTY_GRAPH, GRAPH, graphHandler } from '@/mocks/memory-graph';
+import { EMPTY_GRAPH, GRAPH, ORPHANS_ONLY_GRAPH, graphHandler } from '@/mocks/memory-graph';
 
 /** Visual baselines for the Insights Connections panel (the `memory-graph` ON arm). */
 const meta: Meta<typeof ConnectionsGraph> = {
@@ -36,4 +36,9 @@ export const Empty: Story = {
 /** The server capped the node count: the footer says the graph shows only the most connected. */
 export const Truncated: Story = {
   parameters: { msw: { handlers: [...memoryHandlers(), graphHandler({ ...GRAPH, truncated: true })] } },
+};
+
+/** Nothing credited together but many orphans: no canvas, a short sentence and the list with the true total (40 of 212). */
+export const OrphansOnly: Story = {
+  parameters: { msw: { handlers: [...memoryHandlers(), graphHandler(ORPHANS_ONLY_GRAPH)] } },
 };
