@@ -87,7 +87,7 @@ export const EmptyListsOrphansWithoutCanvas: Story = {
     const c = within(canvasElement);
     await expect(await c.findByText(/No lessons were credited together/)).toBeVisible();
     await expect(c.queryAllByTestId('graph-node')).toHaveLength(0);
-    await expect(canvasElement.querySelector('svg[role="img"], svg[aria-label^="Co-usage graph"]')).toBeNull();
+    await expect(canvasElement.querySelector('[role="group"][aria-label^="Co-usage graph"]')).toBeNull();
     await expect(await c.findByText(/Showing the 40 most read of 212/)).toBeVisible();
     await expect(c.getByRole('heading', { name: /orphans\s*212/i })).toBeVisible();
     await expect(c.getAllByRole('button', { name: /read \d+×/ })).toHaveLength(40);
