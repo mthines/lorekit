@@ -425,10 +425,10 @@ cron job reporting success while nothing reaches Dash0:
 
 | Status | Meaning |
 |--------|---------|
-| `200` | Exported |
+| `200` | Exported. With `pg_stat_statements` absent or unreadable, only `lorekit.db.table.*` is sent: the body carries `warnings` and the span a `WARN` log |
 | `401` | Not the service-role key. A user JWT and an `lk_*` token are both refused — these counters are the cluster's, not a caller's |
 | `502` | Dash0 rejected the payload or was unreachable |
-| `503` | Nothing to send, or nowhere to send it: `pg_stat_statements` absent/unreadable, or `OTEL_EXPORTER_OTLP_ENDPOINT` unset |
+| `503` | Nothing to send, or nowhere to send it: neither reader returned a row, or `OTEL_EXPORTER_OTLP_ENDPOINT` unset |
 
 The reader never raises. A missing extension, one installed but absent from
 `shared_preload_libraries`, a version too old for `toplevel`, or a privilege

@@ -92,9 +92,9 @@ Deno.serve((req: Request) =>
     // `DbQueryStatRow[]`. Passing the bare row type here would compile and then
     // hand `buildDbQueryMetrics` a single object where it expects an array.
     //
-    // The two reads are independent, so they run concurrently; either failing
-    // fails the scrape the same way, since a half export would read on a
-    // dashboard as one family of metrics quietly stopping.
+    // The two reads are independent, so they run concurrently. Either one
+    // ERRORING fails the scrape the same way: a half export after a failed read
+    // would read on a dashboard as one family of metrics quietly stopping.
     const db = createTracedClient(resolved.db, span);
     const [queries, tables] = await Promise.all([
       db.rpc<DbQueryStatRow[]>('lorekit_db_query_stats', { p_limit: limit }),
@@ -123,12 +123,25 @@ Deno.serve((req: Request) =>
       'lorekit.profiling.exported': result.exported,
     });
 
+    // `pg_stat_statements` absent or unreadable is NOT an error: 00074's reader
+    // turns it into zero rows, and the table family still exports. It is a
+    // half export by configuration, so it is said out loud — a WARN log and a
+    // `warnings` entry — rather than hidden behind a bare 200.
+    const warnings: string[] = [];
+    if (rows.length === 0) {
+      warnings.push('pg_stat_statements returned no rows: lorekit.db.query.* not exported');
+      span.log('WARN', 'Profiling: pg_stat_statements returned no rows; only lorekit.db.table.* exported', {
+        'lorekit.profiling.tables': tableRows.length,
+      });
+    }
+
     const body = {
       exported: result.exported,
       statements: rows.length,
       tables: tableRows.length,
       datapoints: result.points,
       metrics: metrics.map((m) => m.name),
+      ...(warnings.length ? { warnings } : {}),
       ...(result.error ? { reason: result.error } : {}),
     };
 
