@@ -55,7 +55,7 @@ returns table (
 language sql
 stable
 security definer
-set search_path = public, pg_catalog
+set search_path = public
 as $$
   select
     s.relname::text,
