@@ -1,0 +1,5 @@
+# .agents/aw/tracker.yml — the ticket skill. Committed; no secrets.
+# Field reference: the ticket skill's rules/config.md. Written by /ticket setup.
+version: 1
+provider: github                 # issues go to the repo's origin (mthines/lorekit)
+require: ask                     # ask a human once per run; skip unattended
