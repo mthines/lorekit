@@ -4,8 +4,8 @@
 version: 1
 telemetry:
   kind: dash0-mcp                       # dash0-mcp | command
-  url: https://api.eu-west-1.aws.dash0.com/mcp
-  token_env: DASH0_AUTH_TOKEN           # a read-only auth token; never the token itself
+  url: https://api.europe-west4.gcp.dash0-dev.com/mcp   # LoreKit exports to dash0-dev (docs/otel.md)
+  token_env: DASH0_AUTH_TOKEN           # a read-only dash0-dev auth token; never the token itself
 on_exception: ""                        # e.g. 'curl -sS -X POST "$AGENT0_WEBHOOK_URL" -H "Content-Type: application/json" --data @{event}'
 environments:
   production:
