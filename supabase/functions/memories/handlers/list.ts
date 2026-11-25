@@ -313,7 +313,7 @@ async function respondWithPage(
   // lesson) fire from the CLI's `read` command — without this it would look
   // exactly like a bulk list and unseen_days could never resolve it.
   const readKind = scopeFilter && params.key ? 'targeted' : 'bulk';
-  recordMemoryReads(db, page.entries.map((e) => e.id), readKind, parseUsageClient(req.headers.get(CLIENT_HEADER)));
+  recordMemoryReads(db, span, page.entries.map((e) => e.id), readKind, parseUsageClient(req.headers.get(CLIENT_HEADER)));
   return res;
 }
 

@@ -17,6 +17,7 @@
 
 import { background } from '../runtime/background.ts';
 import type { DbClient } from '../db/db-client.ts';
+import { createTracedClient, type Span } from './otel.ts';
 import type { UsageClient } from './usage-stats.ts';
 
 /**
@@ -46,22 +47,44 @@ export type MemoryReadKind = 'targeted' | 'bulk';
  *
  * Never throws. A failing counter update must not fail the read it is
  * measuring — same posture as `recordUsageEvent`.
+ *
+ * Traced on a DETACHED child of `span` (`lorekit.memory.record_reads`), the
+ * `audit.ts` pattern: the request span's batch is flushed when the handler
+ * returns, before this background call resolves, so a plain `child()` span
+ * would be lost. The detached span's own batch is flushed when the call ends,
+ * which is what gives the RPC its `CALL lorekit_record_memory_reads` CLIENT
+ * span — and keeps its time off the request's `self_time_ms`, since the read
+ * deliberately does not wait for it.
  */
 export function recordMemoryReads(
   db: DbClient,
+  span: Span,
   memoryIds: readonly string[],
   readKind: MemoryReadKind,
   client: UsageClient | null = null,
 ): void {
   if (memoryIds.length === 0) return;
 
-  const p = Promise.resolve(
-    db.rpc('lorekit_record_memory_reads', {
-      p_memory_ids: memoryIds as string[],
-      p_read_kind: readKind,
-      p_client: client,
-    }),
-  ).then(() => { /* fire-and-forget */ }, () => { /* swallow */ });
+  const { span: bg, flush } = span.detachedChild('lorekit.memory.record_reads', {
+    'lorekit.read.kind': readKind,
+    'lorekit.read.count': memoryIds.length,
+  });
+  const p = (async () => {
+    try {
+      await createTracedClient(db, bg).rpc('lorekit_record_memory_reads', {
+        p_memory_ids: memoryIds as string[],
+        p_read_kind: readKind,
+        p_client: client,
+      });
+    } catch {
+      // Swallowed: a counter write must never fail the read it measures.
+    } finally {
+      bg.end();
+      // Awaited: this task is the isolate's keep-alive, so an export left
+      // running here could be torn down mid-flight.
+      await flush();
+    }
+  })();
 
   const host = background();
   if (host) host.waitUntil(p);

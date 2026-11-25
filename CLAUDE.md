@@ -356,7 +356,7 @@ concurrent queries and drives self time negative.
 
 **Profiles are NOT a signal LoreKit can emit** — Dash0 collects them with a host-level eBPF agent and
 every runtime here is managed serverless. Query-level profiling (`pg_stat_statements` → the three
-`lorekit.db.query.*` cumulative sums, via the service-role-only `profiling` function, OFF until two
+`lorekit.db.query.*` cumulative sums, plus per-table `lorekit.db.table.*` counters (00125), via the service-role-only `profiling` function, OFF until two
 Vault secrets exist) is the substitute. Read
 [docs/otel.md](./docs/otel.md) → "Query-level profiling" and
 [docs/decisions.md](./docs/decisions.md#profiling-is-sql-level-because-there-is-no-host-to-profile)

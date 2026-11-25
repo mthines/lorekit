@@ -87,6 +87,7 @@ export const mirrorPairs = [
   { core: 'packages/mcp-core/src/auth/account-wide-tools.ts', edge: 'supabase/functions/_shared/auth/account-wide-tools.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/telemetry/io-ledger.ts', edge: 'supabase/functions/_shared/telemetry/io-ledger.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/telemetry/db-query-metrics.ts', edge: 'supabase/functions/_shared/telemetry/db-query-metrics.ts', driftChecked: true },
+  { core: 'packages/mcp-core/src/telemetry/db-table-metrics.ts', edge: 'supabase/functions/_shared/telemetry/db-table-metrics.ts', driftChecked: true },
   // Retention-policy candidate/precedence logic. The SQL RPC
   // (`lorekit_groom_candidates`, migration 00088) is authoritative; this is the
   // unit-testable mirror the edge groom/policy handlers use to resolve a

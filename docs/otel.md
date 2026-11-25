@@ -215,9 +215,11 @@ they time each round-trip from the caller's side, one request at a time.
 pg_cron (every 5 minutes — 00124; was every minute)
   └── lorekit_export_db_query_stats()      ← inert without vault secrets
         └── pg_net → POST /functions/v1/profiling
-              └── lorekit_db_query_stats(20)          ← top-N reader RPC
-                    └── buildDbQueryMetrics()          ← pure mapper
-                          └── POST → Dash0 /v1/metrics
+              ├── lorekit_db_query_stats(20)          ← top-N reader RPC
+              │     └── buildDbQueryMetrics()          ← pure mapper
+              ├── lorekit_db_table_stats()            ← per-table reader RPC (00125)
+              │     └── buildDbTableMetrics()          ← pure mapper
+              └── one POST → Dash0 /v1/metrics
 ```
 
 Three metrics, all **cumulative monotonic sums**:
@@ -258,6 +260,51 @@ A consequence worth knowing: a dropped scrape costs **resolution, not data** —
 the next scrape still carries the full cumulative total. That is why the cron
 poke is fire-and-forget.
 
+### Per-table counters (00125)
+
+The same scrape also reads `lorekit_db_table_stats()`: `pg_stat_user_tables` and
+`pg_statio_user_tables` for a **fixed allowlist** of the tables written on the
+request path — `memories`, `memory_read_daily`, `rate_limit_counters`,
+`audit_log`, `usage_events`, `api_tokens`, `memory_citations`. It answers what
+`pg_stat_statements` cannot: whether a table's updates are HOT (00124's whole
+point), how many dead tuples autovacuum is chasing, and which table's blocks are
+read from disk rather than shared buffers — the per-table view of a Disk IO
+budget. Service-role only, like the query reader.
+
+Every point carries `db.table` and `db.system=postgresql`, nothing else.
+
+| Metric | Kind | Unit | Source column |
+|--------|------|------|---------------|
+| `lorekit.db.table.tup_ins` | sum | `{row}` | `n_tup_ins` |
+| `lorekit.db.table.tup_upd` | sum | `{row}` | `n_tup_upd` (HOT updates included) |
+| `lorekit.db.table.tup_hot_upd` | sum | `{row}` | `n_tup_hot_upd` |
+| `lorekit.db.table.tup_del` | sum | `{row}` | `n_tup_del` |
+| `lorekit.db.table.seq_scan` | sum | `{scan}` | `seq_scan` |
+| `lorekit.db.table.idx_scan` | sum | `{scan}` | `idx_scan` (0 for a table with no index) |
+| `lorekit.db.table.heap_blks_read` | sum | `{block}` | `heap_blks_read` — table blocks read from disk |
+| `lorekit.db.table.heap_blks_hit` | sum | `{block}` | `heap_blks_hit` |
+| `lorekit.db.table.idx_blks_read` | sum | `{block}` | `idx_blks_read` — all of the table's indexes |
+| `lorekit.db.table.idx_blks_hit` | sum | `{block}` | `idx_blks_hit` |
+| `lorekit.db.table.autovacuum_count` | sum | `{run}` | `autovacuum_count` |
+| `lorekit.db.table.live_tup` | **gauge** | `{row}` | `n_live_tup` (an estimate) |
+| `lorekit.db.table.dead_tup` | **gauge** | `{row}` | `n_dead_tup` (an estimate; drops when vacuum runs) |
+
+The sums are cumulative since the database's last `pg_stat_reset()`
+(`pg_stat_database.stats_reset`, the epoch when never reset), exported the same
+way as the query sums. The two tuple counts are gauges because they go down: as
+a monotonic sum, every vacuum would read as a counter reset.
+
+Useful queries:
+
+- HOT ratio: `rate(tup_hot_upd) / rate(tup_upd)` by `db.table` — near 1 for
+  `memories` once 00124's fillfactor room is in use.
+- Disk reads: `rate(heap_blks_read) + rate(idx_blks_read)` by `db.table`.
+- Buffer hit ratio: `rate(heap_blks_hit) / (rate(heap_blks_hit) + rate(heap_blks_read))`.
+
+Adding a table means a new migration that redefines the allowlist: it is a
+constant in the function, never caller-supplied, because each table is 13 more
+series.
+
 ### Cardinality
 
 Each statement is one series **per metric**, so top-N is the dial. The endpoint
@@ -283,7 +330,11 @@ select vault.create_secret('<service-role-key>', 'lorekit_profiling_key');
 The gate is in one place, so this is the whole switch: no migration re-run and no
 schedule edit. Turn it off again by deleting either secret.
 
-Requires the `pg_stat_statements` extension (Supabase preloads it). It needs no
+The same two secrets switch on both families, `lorekit.db.query.*` and
+`lorekit.db.table.*`; there is no separate switch for the table counters.
+
+Requires the `pg_stat_statements` extension (Supabase preloads it) for the query
+family; the table family reads built-in views and needs nothing. It needs no
 new Dash0 credentials — the `profiling` function exports through the same
 `OTEL_EXPORTER_OTLP_*` secrets every other function already uses.
 
@@ -374,10 +425,10 @@ cron job reporting success while nothing reaches Dash0:
 
 | Status | Meaning |
 |--------|---------|
-| `200` | Exported |
+| `200` | Exported. With `pg_stat_statements` absent or unreadable, only `lorekit.db.table.*` is sent: the body carries `warnings` and the span a `WARN` log |
 | `401` | Not the service-role key. A user JWT and an `lk_*` token are both refused — these counters are the cluster's, not a caller's |
 | `502` | Dash0 rejected the payload or was unreachable |
-| `503` | Nothing to send, or nowhere to send it: `pg_stat_statements` absent/unreadable, or `OTEL_EXPORTER_OTLP_ENDPOINT` unset |
+| `503` | Nothing to send, or nowhere to send it: neither reader returned a row, or `OTEL_EXPORTER_OTLP_ENDPOINT` unset |
 
 The reader never raises. A missing extension, one installed but absent from
 `shared_preload_libraries`, a version too old for `toplevel`, or a privilege
