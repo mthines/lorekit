@@ -419,7 +419,7 @@ export async function toolRead(
   // (migration 00099). Only the WINNER is counted: the rows precedence
   // discarded were never shown to the caller, and counting them would inflate
   // the `opened_count / read_count` ratio `/insights` is built on.
-  recordMemoryReads(db, [winner.id], 'targeted', 'mcp');
+  recordMemoryReads(db, span, [winner.id], 'targeted', 'mcp');
   // `superseded_by` (00120): the records that say they replace this one, read
   // under the SAME tenant filter as the read above.
   const links = await fetchSupersededBy(tracedDb, [winner.id], (q) =>
@@ -502,7 +502,7 @@ async function toolReadRefs(
     ])
   ).flat();
 
-  if (rows.length > 0) recordMemoryReads(db, rows.map((r) => r.id), 'targeted', 'mcp');
+  if (rows.length > 0) recordMemoryReads(db, span, rows.map((r) => r.id), 'targeted', 'mcp');
   // One `superseded_by` query for the whole batch, never one per ref.
   const links = await fetchSupersededBy(tracedDb, rows.map((r) => r.id), (q) =>
     userId ? applyTenantScope(q, userId, orgIds, keyScoping) : q);
@@ -683,7 +683,7 @@ export async function toolList(
     // tool, not signalled per response.
     // memory.list (order=rank) is a BULK read for the per-memory counter
     // (migration 00077) — one statement for the whole page.
-    recordMemoryReads(db, page.map(({ entry }) => entry.id), 'bulk');
+    recordMemoryReads(db, span, page.map(({ entry }) => entry.id), 'bulk');
     return { entries, hasMore: false, nextCursor: null };
   }
 
@@ -719,7 +719,7 @@ export async function toolList(
   // `ListRow.id` is optional only because the interface is shared with a
   // legacy shape that predates it — the query above always selects `id`, so
   // filtering `undefined` here is a type narrowing, not an expected drop.
-  recordMemoryReads(db, (page.entries as ListRow[]).map((row) => row.id).filter((id): id is string => id !== undefined), 'bulk');
+  recordMemoryReads(db, span, (page.entries as ListRow[]).map((row) => row.id).filter((id): id is string => id !== undefined), 'bulk');
   const links = await supersededBy((page.entries as ListRow[]).map((row) => row.id));
   return {
     ...page,
@@ -877,7 +877,7 @@ export async function toolSearch(
   const page = buildPage(rows, pageLimit, 'updated_at');
   span.setAttributes({ 'lorekit.result.count': page.entries.length });
   // memory.search is a BULK read for the per-memory counter (migration 00077).
-  recordMemoryReads(db, page.entries.map((e) => e.id), 'bulk');
+  recordMemoryReads(db, span, page.entries.map((e) => e.id), 'bulk');
   // `superseded_by` (00120): one query over the page, same tenant filter.
   const links = await fetchSupersededBy(tracedDb, page.entries.map((e) => e.id), (q) =>
     userId ? applyTenantScope(q, userId, orgIds, keyScoping) : q);
@@ -993,7 +993,7 @@ export async function toolListArchived(
   span.setAttributes({ 'lorekit.result.count': rows.length });
   // memory.list_archived is a BULK read for the per-memory counter
   // (migration 00077).
-  recordMemoryReads(db, rows.map((r) => r.id), 'bulk');
+  recordMemoryReads(db, span, rows.map((r) => r.id), 'bulk');
   const entries = rows.map(({ id: _id, ...rest }) => rest);
   return { entries };
 }

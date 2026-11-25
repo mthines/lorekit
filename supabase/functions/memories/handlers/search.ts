@@ -79,7 +79,7 @@ export async function handleSearch(
   const res = ok({ ...page, entries: page.entries.map((e) => withSupersededBy(shapeMemoryRow(e), links)) }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
   // memory.search is a BULK read for the per-memory counter (migration 00077).
-  recordMemoryReads(db, page.entries.map((e) => e.id), 'bulk');
+  recordMemoryReads(db, span, page.entries.map((e) => e.id), 'bulk');
   // Scope attribution for the router's usage event — see SCOPE_COUNT_HEADER /
   // RESOLVED_SCOPE_HEADER (migration 00078). The router cannot read `scopes`
   // itself (it must not consume this POST body), so this handler — which just

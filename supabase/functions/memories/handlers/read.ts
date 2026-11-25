@@ -146,7 +146,7 @@ export async function handleRead(
   // wants, the same intent memory.read's singular path already counts as
   // targeted).
   if (rows.length > 0) {
-    recordMemoryReads(db, rows.map((r) => r.id), 'targeted', parseUsageClient(req.headers.get(CLIENT_HEADER)));
+    recordMemoryReads(db, span, rows.map((r) => r.id), 'targeted', parseUsageClient(req.headers.get(CLIENT_HEADER)));
   }
   return res;
 }

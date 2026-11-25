@@ -56,6 +56,6 @@ export async function handleGet(
   // caller-supplied X-LoreKit-Client header decides whether this counts as an
   // agent opening the lesson (migration 00099's last_opened_at) or a human
   // browsing the dashboard.
-  recordMemoryReads(db, [(data as { id: string }).id], 'targeted', parseUsageClient(req.headers.get(CLIENT_HEADER)));
+  recordMemoryReads(db, span, [(data as { id: string }).id], 'targeted', parseUsageClient(req.headers.get(CLIENT_HEADER)));
   return res;
 }
