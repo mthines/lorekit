@@ -19,7 +19,7 @@ import { memoryGraphRequest, neighboursRequest } from '@/lib/api/memories';
 import { browserAccessToken } from '@/lib/api/session-browser';
 import type { MemoryGraphResponse, NeighboursResponse } from '@lorekit/schemas/memory';
 
-const EMPTY_GRAPH: MemoryGraphResponse = { nodes: [], edges: [], truncated: false };
+const EMPTY_GRAPH: MemoryGraphResponse = { nodes: [], edges: [], truncated: false, orphan_total: 0 };
 
 export function useMemoryNeighbours(id: string | null | undefined, enabled = true) {
   return useQuery<NeighboursResponse>({

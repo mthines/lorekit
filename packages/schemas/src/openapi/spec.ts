@@ -513,7 +513,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       '`cited` array) are joined by an edge weighted by the number of DISTINCT runs they shared. ' +
       '`nodes` are the `limit_nodes` most strongly connected lessons plus up to 40 orphans — read, ' +
       'never opened or credited, connected to nothing — the archive candidates. `truncated` is true ' +
-      'when more lessons were connected than were returned. Personal lore only (the citation ledger ' +
+      'when more lessons were connected than were returned. `orphan_total` counts EVERY orphan, since the list is capped at 40. Personal lore only (the citation ledger ' +
       'does not resolve org-owned lessons). An invalid `scope` is a `400`.',
     security, request: { query: MemoryGraphQuerySchema },
     responses: {

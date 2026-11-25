@@ -1747,5 +1747,11 @@ export const MemoryGraphResponseSchema = z.object({
   edges: z.array(MemoryGraphEdgeSchema),
   /** True when more lessons were connected than `limit_nodes` returned. */
   truncated: z.boolean(),
+  /**
+   * Every orphan (read, never opened, never credited, in no pair) the viewer
+   * has — the `nodes` list carries at most 40 of them, so this is the figure to
+   * print, not `nodes.filter(orphan).length`.
+   */
+  orphan_total: z.number().int().nonnegative(),
 });
 export type MemoryGraphResponse = z.infer<typeof MemoryGraphResponseSchema>;

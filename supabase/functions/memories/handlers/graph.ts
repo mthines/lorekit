@@ -70,6 +70,8 @@ export async function handleGraph(
     nodes: raw?.nodes ?? [],
     edges: raw?.edges ?? [],
     truncated: raw?.truncated ?? false,
+    // A database still on 00122 has no total: the listed orphans are all it can say.
+    orphan_total: raw?.orphan_total ?? (raw?.nodes ?? []).filter((n) => n.orphan).length,
   };
   span.setAttributes({ 'lorekit.result_count': graph.nodes.length, 'lorekit.edge_count': graph.edges.length });
   const res = ok(graph, cors);

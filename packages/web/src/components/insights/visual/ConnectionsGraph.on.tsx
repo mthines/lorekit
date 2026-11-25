@@ -68,6 +68,36 @@ function LensList({ nodes, onOpen, extra }: { nodes: readonly MemoryGraphNode[];
   );
 }
 
+/**
+ * The panel when no lesson was credited alongside another: no canvas, just the
+ * honest sentence and the orphans — the archive candidates — with their true
+ * total, since the server lists at most 40.
+ */
+function OrphansOnly({
+  orphans, total, rangeCaption, onOpen,
+}: { orphans: readonly MemoryGraphNode[]; total: number; rangeCaption: string; onOpen: (n: MemoryGraphNode) => void }) {
+  const capped = total > orphans.length;
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
+      <p className="text-xs text-[var(--color-content-secondary)]">
+        No lessons were credited together in {rangeCaption}, so there is no graph to draw. Connections appear when an agent
+        credits several lessons in one run (the <code className="font-mono">cited</code> list on{' '}
+        <code className="font-mono">memory.write</code>).
+      </p>
+      <div>
+        <h3 className="text-xs font-medium text-[var(--color-content-primary)]">
+          Orphans <span className="text-[var(--color-content-tertiary)]">{total}</span>
+        </h3>
+        <p className="mt-0.5 text-xs text-[var(--color-content-tertiary)]">
+          Read, but never opened, credited or used with another lesson — candidates to archive.
+          {capped ? ` Showing the ${orphans.length} most read of ${total}.` : ''}
+        </p>
+      </div>
+      <LensList nodes={orphans} onOpen={onOpen} extra={(n) => `read ${n.read_count}×`} />
+    </div>
+  );
+}
+
 function ConnectionsBody({ since, rangeCaption }: ConnectionsGraphProps) {
   const [lens, setLens] = useState<Lens>('hubs');
   const { openLessonById } = useMemorySidebar();
@@ -82,7 +112,9 @@ function ConnectionsBody({ since, rangeCaption }: ConnectionsGraphProps) {
     const orphans = orphanNodes(nodes);
     const componentIndex = new Map<string, number>();
     components.forEach((c, i) => c.forEach((n) => componentIndex.set(n.id, i)));
-    return { nodes, edges, topHubs, components, orphans, componentIndex };
+    // The list is capped server-side; `orphan_total` is the real figure. Never below what is listed.
+    const orphanTotal = Math.max(data?.orphan_total ?? 0, orphans.length);
+    return { nodes, edges, topHubs, components, orphans, orphanTotal, componentIndex };
   }, [data]);
 
   const highlight = useMemo<ReadonlySet<string> | null>(() => {
@@ -114,13 +146,28 @@ function ConnectionsBody({ since, rangeCaption }: ConnectionsGraphProps) {
     );
   }
 
+  // Nothing was credited together, so there is no graph to draw: a canvas of
+  // unconnected dots says nothing the list does not. Say so briefly and list them.
+  if (analysis.edges.length === 0) {
+    return (
+      <OrphansOnly
+        orphans={analysis.orphans}
+        total={analysis.orphanTotal}
+        rangeCaption={rangeCaption}
+        onOpen={openNode}
+      />
+    );
+  }
+
   const active = LENSES.find((l) => l.id === lens)!;
+  const orphansCapped = analysis.orphanTotal > analysis.orphans.length;
+  const orphanCap = `Showing ${analysis.orphans.length} of ${analysis.orphanTotal} orphans`;
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
       <div role="radiogroup" aria-label="Connections lens" className="flex flex-wrap gap-1.5">
         {LENSES.map((l) => {
-          const count = l.id === 'hubs' ? analysis.topHubs.length : l.id === 'clusters' ? analysis.components.length : analysis.orphans.length;
+          const count = l.id === 'hubs' ? analysis.topHubs.length : l.id === 'clusters' ? analysis.components.length : analysis.orphanTotal;
           return (
             <button
               key={l.id}
@@ -151,7 +198,12 @@ function ConnectionsBody({ since, rangeCaption }: ConnectionsGraphProps) {
       />
 
       {lens === 'hubs' && <LensList nodes={analysis.topHubs} onOpen={openNode} extra={(n) => `${n.degree} ${n.degree === 1 ? 'link' : 'links'} · credited ${n.cited_count}×`} />}
-      {lens === 'orphans' && <LensList nodes={analysis.orphans} onOpen={openNode} extra={(n) => `read ${n.read_count}×`} />}
+      {lens === 'orphans' && (
+        <>
+          {orphansCapped && <p className="text-xs text-[var(--color-content-secondary)]">{orphanCap}, most read first.</p>}
+          <LensList nodes={analysis.orphans} onOpen={openNode} extra={(n) => `read ${n.read_count}×`} />
+        </>
+      )}
       {lens === 'clusters' &&
         (analysis.components.length === 0 ? (
           <p className="text-xs text-[var(--color-content-tertiary)]">No group of two or more lessons travelled together.</p>
@@ -172,6 +224,7 @@ function ConnectionsBody({ since, rangeCaption }: ConnectionsGraphProps) {
 
       <p className="text-[11px] text-[var(--color-content-tertiary)]">
         {analysis.nodes.length} lessons, {analysis.edges.length} connections in {rangeCaption}
+        {orphansCapped ? `; ${orphanCap.toLowerCase()}` : ''}
         {data.truncated ? ' — showing the most connected; narrow the range to see the rest' : ''}. Connections come from lessons an agent
         credited in the same run, so a quiet graph means little was credited, not little was used.
       </p>

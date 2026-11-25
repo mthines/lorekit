@@ -64,6 +64,9 @@ values
   -- §122's own account, plus the foreign tenant its isolation assertions need.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000f0', 'authenticated', 'authenticated', 'lk-mig-f0@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000f1', 'authenticated', 'authenticated', 'lk-mig-f1@test.local', now(), now()),
+  -- §123's own account, plus the foreign tenant whose orphans must never be counted.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000f2', 'authenticated', 'authenticated', 'lk-mig-f2@test.local', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000f3', 'authenticated', 'authenticated', 'lk-mig-f3@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -12388,6 +12391,43 @@ begin
   v_g := lorekit_memory_graph(v_me, null, 2, 150, null, '{}');
   assert jsonb_array_length(v_g->'edges') = 1,
     format('122 AC-4e: min_weight 2 keeps only the A-B edge, got %s', jsonb_array_length(v_g->'edges'));
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+
+-- ── 123. lorekit_memory_graph reports the true orphan total (00123) ────────
+-- 00122 listed at most 40 orphans and the dashboard printed that cap as the
+-- count. orphan_total counts EVERY orphan, the node list stays capped, and a
+-- foreign tenant's orphans are never counted.
+do $$
+declare
+  v_me    uuid := '00000000-0000-0000-0000-0000000000f2';
+  v_other uuid := '00000000-0000-0000-0000-0000000000f3';
+  v_g     jsonb;
+begin
+  -- 45 orphans: read, never opened, never credited, in no pair.
+  insert into memories (user_id, scope, key, value, read_count)
+  select v_me, 'global', 'orphan-' || g, 'v', g from generate_series(1, 45) g;
+  -- One read-and-OPENED lesson is not an orphan.
+  insert into memories (user_id, scope, key, value, read_count, opened_count)
+  values (v_me, 'global', 'opened-1', 'v', 5, 2);
+  -- The foreign tenant's orphans must not be counted for v_me.
+  insert into memories (user_id, scope, key, value, read_count)
+  select v_other, 'global', 'foreign-orphan-' || g, 'v', 3 from generate_series(1, 7) g;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', format('{"sub":"%s","role":"authenticated"}', v_me), true);
+
+  v_g := lorekit_memory_graph(v_me, null, 1, 150, null, '{}');
+  assert (v_g->>'orphan_total')::int = 45,
+    format('123 AC-3a: orphan_total must count every orphan, got %s', v_g->>'orphan_total');
+  assert (select count(*) from jsonb_array_elements(v_g->'nodes') nd where (nd->>'orphan')::boolean) = 40,
+    '123 AC-3b: the listed orphans stay capped at 40';
+  assert not exists (select 1 from jsonb_array_elements(v_g->'nodes') nd where nd->>'key' like 'foreign-orphan-%'),
+    '123 AC-3c: a foreign tenant''s orphan must not be listed';
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
