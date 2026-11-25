@@ -290,7 +290,7 @@ is not:
   already holds the Dash0 credentials, so this adds no new secret surface for
   them.
 - **Off by default, gated on two Vault secrets.** The migration ships the reader,
-  the exporter and an every-minute cron job, but the exporter returns `disabled`
+  the exporter and a cron job (every minute until 00124, every 5 minutes since), but the exporter returns `disabled`
   and posts nothing until `lorekit_profiling_url` and `lorekit_profiling_key`
   exist — the embeddings posture ([embeddings.md](./embeddings.md)). The gate is
   in ONE place, so enabling it is two `vault.create_secret` calls, not a

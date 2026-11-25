@@ -21,7 +21,7 @@
  * so no user JWT and no `lk_*` API token can reach this — the counters describe
  * the cluster, not a caller's own data.
  *
- * Normally driven every minute by the `lorekit-export-db-query-stats` pg_cron
+ * Normally driven every 5 minutes (00124) by the `lorekit-export-db-query-stats` pg_cron
  * job (supabase/migrations/00074_db_query_stats.sql), which is inert until an
  * operator provisions the two Vault secrets. Curl it directly with the
  * service-role key to check the pipeline by hand.

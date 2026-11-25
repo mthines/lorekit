@@ -383,7 +383,7 @@ The reader never raises. A missing extension, one installed but absent from
 `shared_preload_libraries`, a version too old for `toplevel`, or a privilege
 refusal all yield zero rows — an observability read must not be the thing that
 breaks. The exporter is excluded from its own results (both the RPC and the view
-name), or it would climb its own top-N at one scrape a minute and report on
+name), or it would climb its own top-N at one scrape every 5 minutes and report on
 itself forever.
 
 ---
