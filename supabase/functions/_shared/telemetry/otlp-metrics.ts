@@ -7,8 +7,7 @@
  * `otel.ts`, so a metric and a span leaving the same isolate describe the same
  * resource — the property that lets Dash0 line them up as one service.
  *
- * Only cumulative monotonic sums are modelled, because that is the only shape
- * the one caller needs. `pg_stat_statements` counters are cumulative since the
+ * Cumulative monotonic sums are the main shape. `pg_stat_statements` counters are cumulative since the
  * last reset, so exporting them as cumulative sums lets Dash0 do the
  * differencing (`rate()`) and, crucially, handle a counter RESET correctly on
  * its own: `startTimeUnixNano` carries the stats-reset time, so a reset moves
@@ -16,8 +15,10 @@
  * negative traffic. Computing deltas ourselves would mean persisting the
  * previous snapshot somewhere and getting reset detection wrong in a new place.
  *
- * Histograms and gauges are absent on purpose. Add one when something needs it,
- * not before.
+ * Gauges exist for the one value that is a current estimate rather than a
+ * counter — the live/dead tuple counts of `lorekit.db.table.*` (00125), which go
+ * DOWN when autovacuum runs and so must not be read as a monotonic sum.
+ * Histograms are absent on purpose. Add one when something needs it, not before.
  *
  * Required secrets (same ones the span exporter uses — nothing new):
  *   OTEL_EXPORTER_OTLP_ENDPOINT
@@ -64,6 +65,12 @@ export interface SumMetric {
    * durations are `double`.
    */
   valueType: 'int' | 'double';
+  /**
+   * `sum` (the default) is a cumulative monotonic sum. `gauge` is a value as of
+   * `timeMs` that may go down; its `startTimeMs` is sent but carries no
+   * meaning for the backend.
+   */
+  kind?: 'sum' | 'gauge';
   points: SumPoint[];
 }
 
@@ -114,26 +121,29 @@ export function buildOtlpMetricsPayload(
       resource: { attributes: buildResourceAttributes(opts) },
       scopeMetrics: [{
         scope: { name: `lorekit-${resolveServiceName()}`, version: '1.0.0' },
-        metrics: metrics.map((m) => ({
-          name: m.name,
-          unit: m.unit,
-          description: m.description,
-          sum: {
-            aggregationTemporality: AGGREGATION_TEMPORALITY_CUMULATIVE,
-            // These only ever go up (within a series — a reset starts a new
-            // one, which is what startTimeUnixNano communicates).
-            isMonotonic: true,
-            dataPoints: m.points.map((p) => ({
-              startTimeUnixNano: toUnixNano(p.startTimeMs),
-              timeUnixNano: toUnixNano(p.timeMs),
-              ...renderValue(p.value, m.valueType),
-              attributes: Object.entries(p.attributes).map(([key, value]) => ({
-                key,
-                value: toOtlpValue(value),
-              })),
+        metrics: metrics.map((m) => {
+          const dataPoints = m.points.map((p) => ({
+            startTimeUnixNano: toUnixNano(p.startTimeMs),
+            timeUnixNano: toUnixNano(p.timeMs),
+            ...renderValue(p.value, m.valueType),
+            attributes: Object.entries(p.attributes).map(([key, value]) => ({
+              key,
+              value: toOtlpValue(value),
             })),
-          },
-        })),
+          }));
+          const head = { name: m.name, unit: m.unit, description: m.description };
+          if (m.kind === 'gauge') return { ...head, gauge: { dataPoints } };
+          return {
+            ...head,
+            sum: {
+              aggregationTemporality: AGGREGATION_TEMPORALITY_CUMULATIVE,
+              // These only ever go up (within a series — a reset starts a new
+              // one, which is what startTimeUnixNano communicates).
+              isMonotonic: true,
+              dataPoints,
+            },
+          };
+        }),
       }],
     }],
   };
