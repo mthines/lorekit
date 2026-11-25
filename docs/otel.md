@@ -212,7 +212,7 @@ across every caller** — the one thing per-request CLIENT spans cannot see, sin
 they time each round-trip from the caller's side, one request at a time.
 
 ```
-pg_cron (every minute)
+pg_cron (every 5 minutes — 00124; was every minute)
   └── lorekit_export_db_query_stats()      ← inert without vault secrets
         └── pg_net → POST /functions/v1/profiling
               └── lorekit_db_query_stats(20)          ← top-N reader RPC
