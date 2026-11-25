@@ -79,6 +79,9 @@ export const OWNER_ROW_TOOLS: ReadonlySet<string> = new Set([
   'memory.read-activity',
   'memory.read-ranking',
   'memory.utility',
+  // The memory graph reads the owner's personal citation ledger (00107/00122).
+  'memory.graph',
+  'memory.neighbours',
   'memory.usage',
   'memory.usage-runs',
   'policy.list',

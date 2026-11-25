@@ -207,6 +207,9 @@ const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string, string]>
   // mixed-case scope's lore in no quadrant at all, which reads as "nothing to
   // groom here" rather than "that scope is spelled differently".
   ['utility.ts', 'handleUtility', 'parseScopeFilter'],
+  // Filters `memories.scope` inside `lorekit_memory_graph` (a scope prefix), so it
+  // takes the same reject-only validator as the other `memories.scope` readers.
+  ['graph.ts', 'handleGraph', 'parseScopeFilter'],
 ];
 
 describe('REST scope filters are validated before they reach a query', () => {
@@ -376,6 +379,10 @@ describe('REST scope filters are validated before they reach a query', () => {
     // before any group reaches a query — the injection-avoidance concern this
     // guard exists for is covered there, just not by this validator.
     listed.add('read.ts');
+    // `neighbours.ts` (`GET /memories/:id/neighbours`): its one `.eq('scope', …)`
+    // is the FOCUS ROW'S OWN scope, read from the row it just fetched by id —
+    // never a caller-supplied filter. There is no scope parameter to validate.
+    listed.add('neighbours.ts');
     // `.in('scope', …)` is the array-valued family, excluded by decision above.
     const singleScopePredicate = /\.eq\(\s*'scope'\s*,|p_scope:/;
     const missed: string[] = [];

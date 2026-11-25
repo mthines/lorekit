@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 
 import { LessonDetailSheet } from './LessonDetailSheet';
 import type { LessonEntry } from './LessonCard';
-import { withQueryClient } from '@/mocks/decorators';
+import { withQueryClient, withFeatureFlags } from '@/mocks/decorators';
 
 /**
  * Visual-regression stories for {@link LessonDetailSheet} — the memory detail
@@ -25,7 +25,7 @@ const meta: Meta<typeof LessonDetailSheet> = {
   // same fix already applied to LessonDetailSheet.test.stories.tsx and
   // LorePage.stories.tsx for the identical reason.
   parameters: { layout: 'centered', nextjs: { appDirectory: true } },
-  decorators: [withQueryClient],
+  decorators: [withFeatureFlags, withQueryClient],
 };
 
 export default meta;

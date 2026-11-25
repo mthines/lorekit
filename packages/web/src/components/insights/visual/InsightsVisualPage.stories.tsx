@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { InsightsVisualPage } from './InsightsVisualPage';
 import { FROZEN_NOW } from '@/mocks/memories';
-import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
+import { withQueryClient, withFrozenClock, withFeatureFlags } from '@/mocks/decorators';
 import { emptyVisualHandlers, visualHandlers } from './insights-visual.fixtures';
 
 /**
@@ -19,7 +19,7 @@ const meta: Meta<typeof InsightsVisualPage> = {
     // RangePicker and RunsList need the App Router context.
     nextjs: { appDirectory: true },
   },
-  decorators: [withFrozenClock(FROZEN_NOW), withQueryClient],
+  decorators: [withFrozenClock(FROZEN_NOW), withFeatureFlags, withQueryClient],
   render: () => (
     <div style={{ maxWidth: '72rem', margin: '0 auto', padding: '1rem' }}>
       <InsightsVisualPage />

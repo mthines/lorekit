@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { InsightsVisualPage } from './InsightsVisualPage';
 import { FROZEN_NOW } from '@/mocks/memories';
-import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
+import { withQueryClient, withFrozenClock, withFeatureFlags } from '@/mocks/decorators';
 import { visualHandlers } from './insights-visual.fixtures';
 
 /**
@@ -20,7 +20,7 @@ const meta: Meta<typeof InsightsVisualPage> = {
     msw: { handlers: visualHandlers() },
     nextjs: { appDirectory: true },
   },
-  decorators: [withFrozenClock(FROZEN_NOW), withQueryClient],
+  decorators: [withFrozenClock(FROZEN_NOW), withFeatureFlags, withQueryClient],
 };
 
 export default meta;

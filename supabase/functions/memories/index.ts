@@ -27,6 +27,8 @@ import { handleReadRanking } from './handlers/read-ranking.ts';
 import { handleUtility } from './handlers/utility.ts';
 import { handleRelevant } from './handlers/relevant.ts';
 import { handleClusters } from './handlers/clusters.ts';
+import { handleGraph } from './handlers/graph.ts';
+import { handleNeighbours } from './handlers/neighbours.ts';
 import { handlePolicyList, handlePolicyCreate, handlePolicyUpdate, handlePolicyDelete } from './handlers/policies.ts';
 import { handleGroomPreview, handleGroomRun } from './handlers/groom.ts';
 import { handleProtect } from './handlers/protect.ts';
@@ -87,6 +89,8 @@ const router = createRouter([
   // Near-duplicate clusters. `requires: 'read'` and GET-only by contract, not by
   // omission — see handlers/clusters.ts on why there is no merge counterpart.
   { method: 'GET',    path: '/clusters',       handler: handleClusters,     requires: 'read'  },
+  // Corpus co-usage graph (00122). Literal, so it must precede `/:id`.
+  { method: 'GET',    path: '/graph',          handler: handleGraph,        requires: 'read'  },
   // ── retention policies ("grooming") — literal routes, precede /:id ─────────
   { method: 'GET',    path: '/policies',       handler: handlePolicyList,   requires: 'read'  },
   { method: 'POST',   path: '/policies',       handler: handlePolicyCreate, requires: 'write' },
@@ -98,6 +102,7 @@ const router = createRouter([
   { method: 'PATCH',  path: '/:id',            handler: handleUpdate,       requires: 'write' },
   { method: 'DELETE', path: '/:id',            handler: handleRemove,       requires: 'write' },
   { method: 'POST',   path: '/:id/restore',    handler: handleRestore,      requires: 'write' },
+  { method: 'GET',    path: '/:id/neighbours', handler: handleNeighbours,   requires: 'read'  },
   { method: 'PATCH',  path: '/policies/:id',   handler: handlePolicyUpdate, requires: 'write' },
   { method: 'DELETE', path: '/policies/:id',   handler: handlePolicyDelete, requires: 'write' },
 ], 'memories');

@@ -62,6 +62,7 @@ import { useInsightsLoop } from '@/lib/queries/insights-loop';
 import { useLoreUtilitySummary } from '@/lib/queries/lore-utility';
 import { excludeDashboardReads, failuresByToolOutcome } from '@/lib/usage-health';
 import { rangeCaption, resolveRange, type RangePreset, type TimeRange } from '@/lib/time-range';
+import { ConnectionsGraph } from './ConnectionsGraph';
 import { LoopStageStrip } from './LoopStageStrip';
 import { PulseTimeline } from './PulseTimeline';
 import { RecallFlowChart } from './RecallFlowChart';
@@ -251,6 +252,9 @@ export function InsightsVisualPage() {
             </Card>
           </Deferred>
         </Section>
+
+        {/* Connections — flag-gated (`memory-graph`); the resolver renders nothing when off. */}
+        <ConnectionsGraph since={window.from} rangeCaption={caption} />
 
         <Section
           id="earning-its-place"

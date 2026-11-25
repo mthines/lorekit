@@ -46,6 +46,10 @@ import {
   ClustersResponseSchema,
   UtilityQuerySchema,
   UtilityResponseSchema,
+  MemoryGraphQuerySchema,
+  MemoryGraphResponseSchema,
+  NeighboursQuerySchema,
+  NeighboursResponseSchema,
 } from '../domain/memory.ts';
 import {
   OrgResponseSchema,
@@ -498,6 +502,39 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     responses: {
       200: { description: 'Ranked duplicate clusters', content: { 'application/json': { schema: ClustersResponseSchema } } },
       400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/graph',
+    summary: 'The corpus co-usage graph: lessons credited in the same run',
+    tags: ['Memories'],
+    description:
+      'Two lessons credited in the same run (same `correlation_id`, recorded from `memory.write`\'s ' +
+      '`cited` array) are joined by an edge weighted by the number of DISTINCT runs they shared. ' +
+      '`nodes` are the `limit_nodes` most strongly connected lessons plus up to 40 orphans — read, ' +
+      'never opened or credited, connected to nothing — the archive candidates. `truncated` is true ' +
+      'when more lessons were connected than were returned. Personal lore only (the citation ledger ' +
+      'does not resolve org-owned lessons). An invalid `scope` is a `400`.',
+    security, request: { query: MemoryGraphQuerySchema },
+    responses: {
+      200: { description: 'Nodes and weighted edges', content: { 'application/json': { schema: MemoryGraphResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/{id}/neighbours',
+    summary: 'One lesson\'s connections: co-cited, lineage, near-duplicates and runs',
+    tags: ['Memories'],
+    description:
+      'Every edge touching one lesson: `co_cited` (credited in the same run, weight = shared runs), ' +
+      '`cited_by` / `cites` (through the retrospective that did the citing), `supersedes` / ' +
+      '`superseded_by`, and `duplicate` (near-duplicate wording, the same clustering as ' +
+      '`GET /memories/clusters`). `runs` lists the runs the lesson was credited in; a `correlation_id` ' +
+      'may embed a repo or PR identifier. A lesson the caller cannot see is a `404`.',
+    security, request: { params: MemoryIdParamsSchema, query: NeighboursQuerySchema },
+    responses: {
+      200: { description: 'The lesson\'s neighbours and runs', content: { 'application/json': { schema: NeighboursResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse, 404: errorResponse,
     },
   });
   registry.registerPath({

@@ -283,7 +283,7 @@ describe('track — lore.memory_opened', () => {
   });
 
   it('keeps the five opening surfaces apart', () => {
-    for (const surface of ['lore-list', 'lore-cluster', 'lore-keyboard', 'command-palette', 'header-recents'] as const) {
+    for (const surface of ['lore-list', 'lore-cluster', 'lore-keyboard', 'command-palette', 'header-recents', 'lore-connection', 'insights-graph'] as const) {
       track({ name: 'lore.memory_opened', surface, scopeType: 'global' });
       expect(lastCall().attributes['lorekit.lore.memory.surface']).toBe(surface);
     }

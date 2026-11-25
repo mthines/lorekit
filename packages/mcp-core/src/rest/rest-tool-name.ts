@@ -84,6 +84,10 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   // (which lore is there vs which of it is redundant), and folding it in would
   // inflate `memory.list` with panel refreshes.
   'memories GET /clusters': 'memory.clusters',
+  // Memory graph (00122): the corpus co-usage graph and one lesson's neighbourhood.
+  // Own names — neither is a list or a read of a lesson, they are connection analytics.
+  'memories GET /graph': 'memory.graph',
+  'memories GET /:id/neighbours': 'memory.neighbours',
   // ── retention policies ("grooming") ─────────────────────────────────────
   'memories GET /policies': 'policy.list',
   'memories POST /policies': 'policy.create',

@@ -64,7 +64,9 @@ export type MemoryOpenSurface =
   | 'lore-cluster'
   | 'lore-keyboard'
   | 'command-palette'
-  | 'header-recents';
+  | 'header-recents'
+  | 'lore-connection'
+  | 'insights-graph';
 
 /**
  * Why the detail panel closed.

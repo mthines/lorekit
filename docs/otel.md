@@ -1009,7 +1009,7 @@ attribute here.
 
 | Event | Emitted when | Attributes |
 |-------|--------------|------------|
-| `lore.memory_opened` | A memory was selected into the detail panel | `lorekit.lore.memory.surface` (`lore-list`/`lore-cluster`/`lore-keyboard`/`command-palette`/`header-recents`), `.scope_type`, `.index` (optional) |
+| `lore.memory_opened` | A memory was selected into the detail panel | `lorekit.lore.memory.surface` (`lore-list`/`lore-cluster`/`lore-keyboard`/`command-palette`/`header-recents`/`lore-connection`/`insights-graph`), `.scope_type`, `.index` (optional) |
 | `lore.memory_closed` | The detail panel was dismissed | `lorekit.lore.memory.close_reason` |
 | `lore.memory_content_tab` | Preview ⇄ Edit inside the panel | `lorekit.lore.memory.content_tab`, `.content_tab_source` (`click`/`shortcut`) |
 | `lore.memory_edit` | An edit was saved or discarded | `lorekit.lore.memory.edit_action`, `.edit_outcome` (saves only), `.changed_value`, `.changed_tags`, `.changed_ttl` |
