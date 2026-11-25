@@ -1,0 +1,61 @@
+# .agents/aw/release.yml — deployment-verify. Committed; no secrets.
+# Field reference: the deployment-verify skill's rules/config.md. Written by /deployment-verify setup.
+# Personal policy (rollback: ask | auto | never) goes in ~/.agents/aw/config.yml → policies.
+version: 1
+telemetry:
+  kind: dash0-mcp                       # dash0-mcp | command
+  url: https://api.eu-west-1.aws.dash0.com/mcp
+  token_env: DASH0_AUTH_TOKEN           # a read-only auth token; never the token itself
+on_exception: ""                        # e.g. 'curl -sS -X POST "$AGENT0_WEBHOOK_URL" -H "Content-Type: application/json" --data @{event}'
+environments:
+  production:
+    dataset: default                    # telemetry dataset; the MCP server comes from telemetry.yml
+    deploy:
+      # Both the edge functions (supabase/functions/_shared/telemetry/otel.ts, GITHUB_SHA)
+      # and the web app (packages/web/src/instrumentation.ts, VERCEL_GIT_COMMIT_SHA, set
+      # explicitly by deploy.yml) stamp service.version with the commit SHA — not Vercel's dpl_ id.
+      detect: { attribute: service.version, equals: merge_sha }
+      timeout_minutes: 60
+    traffic: real                       # https://lorekit.io
+    ingest_wait_seconds: 45
+  local:
+    dataset: ""                         # your local dataset; set it in ~/.agents/aw/config.yml
+    deploy: { detect: manual }          # the restart is the deploy; deployment-verify records the time
+    traffic: "for i in $(seq 1 {n}); do curl -s -o /dev/null http://localhost:3000/; done"
+    ingest_wait_seconds: 45
+  # No preview environment: PR previews are per-PR (environments.yml), and a rollout runs after the merge.
+flags:
+  # The flag system is the in-repo OpenFeature registry (packages/feature-flags/src/registry.ts):
+  # static defaults, no external API. A flag is flipped by a human, in a follow-up PR that edits
+  # the registry (the feature-flags skill). atelier reads this as decided, not missing.
+  providers: []
+pipeline:                               # atelier's Deliver stage (rules/config.md § pipeline)
+  workflow: Deploy                      # .github/workflows/deploy.yml — push to main
+  # Every other Deploy job is gated on a path filter (needs.changes.outputs.*) and skips when
+  # nothing in its area changed; a failed one is red without being listed.
+  required_jobs: ["Detect changes"]
+  timeout_minutes: 45                   # preview deploy + smoke + production deploy + web e2e + promote
+  on_red: fix-first                     # fix-first: fix PR, revert on a second red | revert-first: revert at once, then fix forward
+rollback:
+  # Used only when a change has no flag. Tried in order; each must be safe to run twice.
+  # deploy.yml's rollback-production / rollback-web-production jobs already roll back a failed smoke.
+  - kind: revert-pr                     # always available; slowest
+steps: [1, 10, 50, 100]                 # rollout percentages
+step_window_minutes: 10                 # production: how long each step is watched before measuring
+max_hold_minutes: 30                    # per step; then return to the last passed step and stop
+# A human hold (rules/hold.md): after this step passes, wait for `tick.mjs --pr <n> --approve | --override`.
+# Off when absent. Must be a step value other than the last.
+# hold_after: 10
+# Earned-autonomy rule (rules/autonomy.md): only shapes the AUTO/HUMAN recommendation printed at a hold;
+# nothing advances or flips a flag because of it. Off when absent (every recommendation is HUMAN).
+# promotion: { min_agree_streak: 5, min_review_seconds: 120, risk_classes: [ui, config], max_level: 1 }
+thresholds:                             # defaults; a PR contract may tighten them
+  min_test_requests: 20
+  min_reference_requests: 20
+  max_error_rate_delta_pp: 5
+  max_latency_ratio: 3
+  min_latency_delta_ms: 50
+notify: []                              # rules/notify.md; the PR comment is always updated. Add slack/linear routes here.
+people: {}                              # GitHub login → Slack user ID, for mentions
+posting:
+  forbidden: []                         # strings that trigger other automations in your org; redacted before posting
