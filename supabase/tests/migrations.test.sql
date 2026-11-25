@@ -12501,6 +12501,69 @@ end;
 $$;
 
 
+-- ── 125. per-table stats reader is bounded, operator-only and faithful (00125) ──
+-- `lorekit_db_table_stats()` feeds `lorekit.db.table.*`. Three properties:
+-- it is unreachable from PostgREST's tenant roles (it describes the cluster),
+-- it returns exactly the allowlisted tables (every row is a metric series), and
+-- each value is the catalog's own counter, not a re-derivation. A counter
+-- rising after a write is NOT assertable here: this file is one transaction
+-- and Postgres publishes table stats only when a transaction ends.
+do $$
+declare
+  v_count   int;
+  v_bad     text;
+  v_allowed text[] := array['api_tokens', 'audit_log', 'memories', 'memory_citations',
+                            'memory_read_daily', 'rate_limit_counters', 'usage_events'];
+begin
+  select count(*) into v_count
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_db_table_stats' and p.prosecdef;
+  assert v_count = 1,
+    format('125 AC-1: lorekit_db_table_stats must exist once as SECURITY DEFINER (found %s)', v_count);
+
+  assert not has_function_privilege('anon', 'lorekit_db_table_stats()', 'execute'),
+    '125 AC-1: anon must NOT be able to execute lorekit_db_table_stats';
+  assert not has_function_privilege('authenticated', 'lorekit_db_table_stats()', 'execute'),
+    '125 AC-1: authenticated must NOT be able to execute lorekit_db_table_stats';
+  assert has_function_privilege('service_role', 'lorekit_db_table_stats()', 'execute'),
+    '125 AC-1: service_role MUST be able to execute lorekit_db_table_stats';
+
+  -- Exactly the allowlisted tables that exist — no more (cardinality), no
+  -- fewer (a silently missing series looks like a quiet table).
+  select string_agg(table_name, ',' order by table_name) into v_bad
+    from lorekit_db_table_stats() where table_name <> all (v_allowed);
+  assert v_bad is null, format('125 AC-1: a table outside the allowlist was returned: %s', v_bad);
+
+  select count(*) into v_count from lorekit_db_table_stats();
+  assert v_count = (select count(*) from pg_stat_user_tables
+                     where schemaname = 'public' and relname = any (v_allowed)),
+    format('125 AC-1: expected one row per existing allowlisted table, got %s', v_count);
+  assert v_count = cardinality(v_allowed),
+    format('125 AC-1: every allowlisted table exists in this schema, so all %s must be returned (got %s)',
+           cardinality(v_allowed), v_count);
+
+  -- Faithful: each counter is the catalog's value (idx counters coalesced).
+  perform pg_stat_clear_snapshot();
+  select string_agg(r.table_name, ',') into v_bad
+    from lorekit_db_table_stats() r
+    join pg_stat_user_tables s on s.schemaname = 'public' and s.relname = r.table_name
+    join pg_statio_user_tables io on io.relid = s.relid
+   where (r.n_tup_ins, r.n_tup_upd, r.n_tup_hot_upd, r.n_tup_del, r.n_live_tup, r.n_dead_tup,
+          r.seq_scan, r.idx_scan, r.autovacuum_count,
+          r.heap_blks_read, r.heap_blks_hit, r.idx_blks_read, r.idx_blks_hit)
+     is distinct from
+         (s.n_tup_ins, s.n_tup_upd, s.n_tup_hot_upd, s.n_tup_del, s.n_live_tup, s.n_dead_tup,
+          s.seq_scan, coalesce(s.idx_scan, 0), s.autovacuum_count,
+          io.heap_blks_read, io.heap_blks_hit, coalesce(io.idx_blks_read, 0), coalesce(io.idx_blks_hit, 0));
+  assert v_bad is null, format('125 AC-1: counters differ from pg_stat_user_tables for: %s', v_bad);
+
+  assert not exists (select 1 from lorekit_db_table_stats()
+                      where stats_since is distinct from
+                            (select stats_reset from pg_stat_database where datname = current_database())),
+    '125 AC-1: stats_since must be this database''s stats_reset';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
