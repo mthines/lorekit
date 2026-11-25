@@ -72,7 +72,7 @@ resource-attribute list: a metric on a different resource than the spans beside
 it silently stops correlating in Dash0.
 
 The `profiling` function is the operator surface for query-level profiling
-(`pg_stat_statements` → Dash0 metrics). It is service-role ONLY and deliberately
+(`pg_stat_statements` and per-table `pg_stat_user_tables` counters → Dash0 metrics). It is service-role ONLY and deliberately
 does not use `createRouter` — a cron poke is not a tenant request and must not
 land in `usage_events`. See [docs/otel.md](../../docs/otel.md) →
 "Query-level profiling".
