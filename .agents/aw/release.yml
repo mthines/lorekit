@@ -4,8 +4,8 @@
 version: 1
 telemetry:
   kind: dash0-mcp                       # dash0-mcp | command
-  url: https://api.europe-west4.gcp.dash0-dev.com/mcp   # LoreKit exports to dash0-dev (docs/otel.md)
-  token_env: DASH0_AUTH_TOKEN           # a read-only dash0-dev auth token; never the token itself
+  mcp_server: dash0-dev                 # LoreKit exports to dash0-dev (docs/otel.md); url + token come from .mcp.json
+  # token_env: DASH0_AUTH_TOKEN         # optional override (CI): a set variable wins over the server's header
 on_exception: ""                        # e.g. 'curl -sS -X POST "$AGENT0_WEBHOOK_URL" -H "Content-Type: application/json" --data @{event}'
 environments:
   production:
