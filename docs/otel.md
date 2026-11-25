@@ -212,7 +212,7 @@ across every caller** — the one thing per-request CLIENT spans cannot see, sin
 they time each round-trip from the caller's side, one request at a time.
 
 ```
-pg_cron (every minute)
+pg_cron (every 5 minutes — 00124; was every minute)
   └── lorekit_export_db_query_stats()      ← inert without vault secrets
         └── pg_net → POST /functions/v1/profiling
               └── lorekit_db_query_stats(20)          ← top-N reader RPC
@@ -383,7 +383,7 @@ The reader never raises. A missing extension, one installed but absent from
 `shared_preload_libraries`, a version too old for `toplevel`, or a privilege
 refusal all yield zero rows — an observability read must not be the thing that
 breaks. The exporter is excluded from its own results (both the RPC and the view
-name), or it would climb its own top-N at one scrape a minute and report on
+name), or it would climb its own top-N at one scrape every 5 minutes and report on
 itself forever.
 
 ---

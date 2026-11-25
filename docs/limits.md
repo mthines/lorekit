@@ -164,6 +164,8 @@ only the current window is ever read. `lorekit_purge_rate_limit_counters()`
 hard-deletes windows older than an hour and is scheduled every 15 minutes via
 pg_cron (when the extension is available), so the counter table and its index
 stay small. Without pg_cron, drive the function from an external scheduler.
+The table is `UNLOGGED` (00124): it is written on every request, so skipping
+the WAL saves Disk IO, and a crash only restarts the current one-minute window.
 
 ## Config source & per-user overrides
 

@@ -12435,6 +12435,72 @@ end;
 $$;
 
 
+-- ── 124. read counting is a HOT update; rate-limit counters skip the WAL (00124) ──
+-- 00085/00104 indexed read_count and opened_count, so every counter bump from
+-- lorekit_record_memory_reads rewrote every index on memories. 00124 drops
+-- those indexes, gives the table page headroom, and makes the per-request
+-- rate-limit counter unlogged. Behaviour must not change: the counter still
+-- moves and updated_at still does not.
+do $$
+declare
+  v_user    uuid := '00000000-0000-0000-0000-0000000000f2';  -- seeded in auth.users above (§123)
+  v_id      uuid;
+  v_stamp   timestamptz;
+  v_upd0    bigint;
+  v_hot0    bigint;
+  v_upd1    bigint;
+  v_hot1    bigint;
+  v_first   integer;
+  v_second  integer;
+begin
+  -- AC-1: no index on memories names a read-counter column, in its key or its
+  -- predicate. A new one would make every recorded read non-HOT again.
+  assert not exists (
+    select 1 from pg_indexes
+     where schemaname = 'public' and tablename = 'memories'
+       and indexdef ~ '\m(read_count|opened_count|last_read_at|last_opened_at)\M'
+  ), format('124 AC-1: an index on memories names a read-counter column: %s', (
+    select string_agg(indexname, ', ') from pg_indexes
+     where schemaname = 'public' and tablename = 'memories'
+       and indexdef ~ '\m(read_count|opened_count|last_read_at|last_opened_at)\M'));
+
+  -- AC-2: page headroom for the HOT tuple.
+  assert (select 'fillfactor=85' = any(reloptions) from pg_class where oid = 'public.memories'::regclass),
+    '124 AC-2: memories must have fillfactor=85';
+
+  -- AC-3: a recorded read is a HOT update, the counter moves, the stamp does not.
+  insert into memories (user_id, scope, key, value, updated_at)
+  values (v_user, 'global', 'hot-read-124', 'v', now() - interval '3 days')
+  returning id, updated_at into v_id, v_stamp;
+
+  select n_tup_upd, n_tup_hot_upd into v_upd0, v_hot0
+    from pg_stat_xact_user_tables where relid = 'public.memories'::regclass;
+
+  perform lorekit_record_memory_reads(array[v_id], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_id], 'targeted', 'mcp');
+
+  select n_tup_upd, n_tup_hot_upd into v_upd1, v_hot1
+    from pg_stat_xact_user_tables where relid = 'public.memories'::regclass;
+
+  assert v_upd1 - v_upd0 = 2,
+    format('124 AC-3a: two recorded reads must be two row updates, got %s', v_upd1 - v_upd0);
+  assert v_hot1 - v_hot0 = v_upd1 - v_upd0,
+    format('124 AC-3b: every counter update must be HOT, got %s of %s', v_hot1 - v_hot0, v_upd1 - v_upd0);
+  assert (select read_count = 2 and opened_count = 1 and updated_at = v_stamp
+            from memories where id = v_id),
+    '124 AC-3c: read_count/opened_count must move and updated_at must not';
+
+  -- AC-4: the rate-limit counter is unlogged and still counts.
+  assert (select relpersistence = 'u' from pg_class where oid = 'public.rate_limit_counters'::regclass),
+    '124 AC-4a: rate_limit_counters must be UNLOGGED';
+  select current_count into v_first  from lorekit_check_rate_limit(v_user, 60);
+  select current_count into v_second from lorekit_check_rate_limit(v_user, 60);
+  assert v_second = v_first + 1,
+    format('124 AC-4b: lorekit_check_rate_limit must still count, got %s then %s', v_first, v_second);
+end;
+$$;
+
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
