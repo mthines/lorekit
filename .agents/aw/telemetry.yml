@@ -20,7 +20,7 @@ web:
   service_name: web                   # SERVICE_NAME in packages/web/src/lib/dash0-rum.ts
   event_patterns:
     # track({ name: 'lore.sort_changed', … }) — packages/web/src/lib/analytics/track.ts
-    - "track\\(\\{\\s*name:\\s*['\"]([^'\"]+)"
+    - 'track\(\{\s*name:\s*[\x27\x22]([^\x27\x22]+)'
     # export const AUTH_ATTEMPT_EVENT = 'auth.attempt' — packages/web/src/lib/auth-telemetry.ts
-    - "_EVENT\\s*=\\s*['\"]([a-z_]+\\.[a-z_.]+)"
+    - '_EVENT\s*=\s*[\x27\x22]([a-z_]+\.[a-z_.]+)'
 ingest_wait_seconds: 45
