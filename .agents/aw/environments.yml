@@ -42,19 +42,10 @@ environments:
       refresh:
         when: missing-or-expired
         env: [LOREKIT_TESTING_USER_NAME, LOREKIT_TESTING_USER_PW]
-        # Reuses the repo's own headless login (scripts/auth-bootstrap-credentials.mjs).
-        # The runner exports PREVIEW_URL as this environment's url.
-        command: |
-          set -a
-          [ -f .env.local ] && . ./.env.local
-          [ -f packages/web/.env.local ] && . ./packages/web/.env.local
-          set +a
-          AUTH_LOGIN_URL="${PREVIEW_URL:-http://localhost:3000}/login" \
-            AUTH_STORAGE_STATE=./.auth/local.json \
-            AUTH_POST_LOGIN_URL_PATTERN='/lore' \
-            AUTH_AUTHED_ROLE='link' \
-            AUTH_AUTHED_NAME='User settings for' \
-            node scripts/auth-bootstrap-credentials.mjs
+        # Reuses the repo's own headless login (scripts/auth-bootstrap-credentials.mjs),
+        # in a script because yaml-lite cannot parse a `|` block. The runner exports
+        # PREVIEW_URL as this environment's url.
+        command: sh .agents/aw/scripts/auth/login-local.sh
         timeout_seconds: 120
       # The email is the LOREKIT_TESTING_USER_NAME env var, never committed.
       identity: { email: env:LOREKIT_TESTING_USER_NAME, role: user }
@@ -80,18 +71,7 @@ environments:
       refresh:
         when: always
         env: [LOREKIT_TESTING_USER_NAME, LOREKIT_TESTING_USER_PW, VERCEL_AUTOMATION_BYPASS_SECRET]
-        command: |
-          set -a
-          [ -f .env.local ] && . ./.env.local
-          [ -f packages/web/.env.local ] && . ./packages/web/.env.local
-          set +a
-          : "${PREVIEW_URL:?PREVIEW_URL is set by the runner to the resolved preview origin}"
-          AUTH_LOGIN_URL="$PREVIEW_URL/login" \
-            AUTH_STORAGE_STATE=./.auth/preview.json \
-            AUTH_POST_LOGIN_URL_PATTERN='/lore' \
-            AUTH_AUTHED_ROLE='link' \
-            AUTH_AUTHED_NAME='User settings for' \
-            node scripts/auth-bootstrap-credentials.mjs
+        command: sh .agents/aw/scripts/auth/login-preview.sh
         timeout_seconds: 120
       identity: { email: env:LOREKIT_TESTING_USER_NAME, role: user }
     fixtures:
