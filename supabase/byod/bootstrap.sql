@@ -26928,10 +26928,11 @@ on conflict (version) do nothing;
 --      for), the utility census (00106), the memory graph (00122/00123), the
 --      `max_read_count` / `max_opened_count` retention conditions (00101/00105)
 --      and the opened-count Explorer sort (00113) — all select a tenant's rows
---      first (`user_id = …` OR a member org's `org_id`) and then order on a
---      CASE expression or a ratio, a shape a `(user_id, read_count)` btree
---      cannot serve. They read at most the caller's capped rows (5000 per
---      owner) and sort them in memory with or without these indexes.
+--      first (`user_id = …` OR a member org's `org_id`); behind that OR a
+--      `(user_id, <counter>)` btree cannot serve the order, and several order
+--      on a CASE expression or a ratio besides. They read at most the
+--      caller's capped rows (5000 per owner) and sort them in memory with or
+--      without these indexes.
 --   2. fillfactor 85 on `memories`, so a page keeps room for the new tuple a
 --      HOT update needs. It applies to pages written from now on; existing
 --      full pages gain room as HOT pruning reclaims their dead tuples. No
@@ -26987,6 +26988,8 @@ begin
   end if;
 end;
 $$;
+
+reset lock_timeout;
 ;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00124', 'memories_hot_read_counters')
