@@ -219,10 +219,12 @@ Each step's full procedure lives in its own skill (`polish`, `create-pr`, `revie
 1. **`/polish`** — local-only (never writes to GitHub); auto-fix all findings, commit each pass. Skip only if the diff is non-code.
 2. **`/create-pr`** — opens a **draft**. Do NOT pass `--no-review` (this repo has no external bot; the review pass is `/create-pr`'s own `review-loop`), `--no-feedback` (skips Step 4), or `--no-quality` (skips Steps 3–4).
 3. **`review-loop`** — the ONE reviewer; `/create-pr` auto-runs `Skill("review-loop", "<pr-url> --no-ci")`, converging `pr-reviewer` → `implement-suggestion --resolve-all` → `polish simplify` (≤5 iters) until every thread is resolved by a fix or an honest reply, then refreshes the PR description. Re-run it yourself after any hand-pushed commit.
-4. **`/implement-suggestion --watch`** — background; absorbs genuine external (CodeRabbit/human) feedback posted after `review-loop`'s last push, one commit per comment (`/critical`+`/confidence` gated), ≤5 iters. Never undrafts.
+4. **`/implement-suggestion --watch`** — background; absorbs genuine external (CodeRabbit/human) feedback posted after `review-loop`'s last push, one commit per comment (`/critical`+`/confidence` gated), ≤5 iters. Never undrafts (only `/atelier`'s Ready stage does).
 5. **`/ci-auto-fix`** — drive CI green (confidence-gated, never weakens a check); re-run Step 3 after its push.
 
-**Definition of ready-to-review:** `review-loop` PASS with zero open threads (only genuine human-judgment flags may remain — surface them) AND green CI. The agent does **not** flip the draft flag — undrafting stays a human decision.
+**Definition of ready-to-review:** `review-loop` PASS with zero open threads (only genuine human-judgment flags may remain — surface them) AND green CI.
+
+**Who may undraft and merge — `/atelier` decides, not this file.** Outside `/atelier` (the five steps run by hand), the agent does **not** flip the draft flag: undrafting stays a human decision. Under `/atelier`, the skill owns the human-in-the-loop line. It undrafts (Ready) and squash-merges (Merge) only when its own scripted gates pass — fresh green CI at the head (`ci-ran.mjs`), `merge-gate.mjs`, a `deployment-verify:v1` contract naming the feature flag for a user-visible change, every required companion run — and otherwise records `hold`/`refuse`/`failed` and stops with `Needs you:`. Atelier never flips a flag or runs `deployment-verify`; a human or `/deployment-verify` rolls the flag out after the merge. Do not bypass an atelier gate, and do not add a second approval step on top of it: the gates are the loop's human checkpoints (`--keep-draft` holds the PR as a draft for a human).
 
 ### Summary table
 
@@ -234,7 +236,7 @@ Each step's full procedure lives in its own skill (`polish`, `create-pr`, `revie
 | 2 | `/create-pr` — open draft PR; no `--no-review` (there is no external bot to defer to) | Agent |
 | 3 | `review-loop` converges automatically (`pr-reviewer` → `implement-suggestion --resolve-all` → `polish simplify`, ≤5 iters) — the ONE review agent, refreshes the PR description on convergence | Agent (auto-dispatched by `/create-pr`) |
 | 4 | `/implement-suggestion --watch` (background) — absorb genuine CodeRabbit/human feedback posted after `review-loop`'s last push, one commit per comment, ≤**5** iters, never undrafts | Agent (background) |
-| 5 | `/ci-auto-fix` until green. Ready-to-review = `review-loop` PASS with zero open threads AND green CI (agent does not undraft) | Agent |
+| 5 | `/ci-auto-fix` until green. Ready-to-review = `review-loop` PASS with zero open threads AND green CI; undrafting and merging belong to `/atelier` (below), never to a hand-run step | Agent |
 
 ## Scope format (canonical — `::` separator only)
 
