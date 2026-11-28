@@ -214,7 +214,8 @@ const MEMORY_DISPATCH = {
   // with anything the caller DID pass taking precedence.
   // An edit (00126) changes an existing lesson and must not restamp where it
   // was recorded, so it gets no derived origin, only what the caller passed.
-  'memory.write': (store, a, ctx) => store.write(a.edit ? a : { ...a, ...withDerivedOrigin(a, ctx) }),
+  'memory.write': async (store, a, ctx) =>
+    refuseUnacknowledgedEdit(a, await store.write(a.edit ? a : { ...a, ...withDerivedOrigin(a, ctx) })),
   'memory.read': (store, a) => store.read(a),
   // `view` is projected and `kind`/`host` post-filtered client-side rather than
   // forwarded. The remote store reads `GET /memories`, which has no `view`
@@ -305,6 +306,19 @@ function sortScopes(rows) {
 // Provenance for a tool call: the caller's explicit values win, the working
 // directory and CI environment fill the rest. Best-effort — a failure to shell
 // out to git must never fail the write, so it degrades to no origin at all.
+// A server that predates 00126 drops the unknown `edit` key and writes
+// normally (the remote store then reports `edit: false`). Surface that as a
+// failed call so an agent never takes a counted sighting for an edit.
+export function refuseUnacknowledgedEdit(args = {}, result) {
+  if (!args.edit || !result || result.ok === false || result.edit !== false) return result;
+  return {
+    ...result,
+    ok: false,
+    code: 'edit_unsupported',
+    error: `edit_unsupported: the server wrote ${args.scope}::${args.key} as a normal write, which counted a sighting or created the key. Upgrade the server before editing.`,
+  };
+}
+
 function withDerivedOrigin(args = {}, { root } = {}) {
   try {
     return mergeOrigin(deriveOrigin({ cwd: root }), {

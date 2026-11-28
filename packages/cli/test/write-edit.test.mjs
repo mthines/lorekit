@@ -12,6 +12,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRemoteStore } from '../src/store/remote.mjs';
+import { write } from '../src/commands/write.mjs';
+import { refuseUnacknowledgedEdit } from '../src/commands/mcp-server.mjs';
+import { setWriters } from '../src/shared/util.mjs';
+import { withRemote } from './helpers.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -131,4 +135,33 @@ test('remote store: an edit of a missing key surfaces code not_found', async () 
   assert.equal(r.ok, false);
   assert.equal(r.code, 'not_found');
   assert.equal(r.httpStatus, 404);
+});
+
+test('remote store: lorekit write --edit exits 1 when the server does not acknowledge the edit', async () => {
+  const lines = [];
+  const restore = setWriters({ out: () => {}, err: (l) => lines.push(String(l)) });
+  try {
+    const { result, calls } = await withRemote(
+      () => write({
+        _: ['write', 'global::k', 'v'], edit: true, remote: true, 'no-origin': true,
+        dir: tmp('lk-edit-remote-'), endpoint: 'https://ref.supabase.co/functions/v1/mcp', token: 'lk_rw_test',
+      }),
+      { respond: () => ({ status: 201, body: { id: 'x', scope: 'global', key: 'k', seen_count: 2, version: 2 } }) },
+    );
+    assert.equal(calls.find((c) => c.method === 'POST')?.body?.edit, true);
+    assert.equal(typeof result === 'object' ? result.exitCode : result, 1);
+    assert.match(lines.join('\n'), /does not support --edit/);
+  } finally {
+    restore();
+  }
+});
+
+test('remote store: the stdio MCP memory.write refuses an unacknowledged edit', () => {
+  const r = refuseUnacknowledgedEdit({ scope: 'global', key: 'k', edit: true }, { ok: true, edit: false, seen_count: 2 });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'edit_unsupported');
+  const acked = { ok: true, edit: true };
+  assert.equal(refuseUnacknowledgedEdit({ edit: true }, acked), acked);
+  const plain = { ok: true };
+  assert.equal(refuseUnacknowledgedEdit({}, plain), plain);
 });
