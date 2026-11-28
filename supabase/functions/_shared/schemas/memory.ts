@@ -88,6 +88,12 @@ export const MemoryWriteSchema = z.object({
   // yet". Omitted = unchecked, exactly as before. The shared
   // `parseExpectedVersion` owns the rule; this only admits the wire type.
   expected_version: z.number().optional(),
+  // Maintenance edit (00126): change the existing record for scope+key without
+  // counting a sighting — `seen_count` stays as stored, an omitted tags /
+  // source_agent / trigger keeps its stored value, and a key with no live
+  // record is refused with `memory_not_found` instead of being created.
+  // Omitted = a plain write, the next sighting. `parseEdit` owns the rule.
+  edit: z.boolean().optional(),
 });
 export type MemoryWrite = z.infer<typeof MemoryWriteSchema>;
 
@@ -400,7 +406,11 @@ export const ListMemoriesQuerySchema = z.object({
 });
 export type ListMemoriesQuery = z.infer<typeof ListMemoriesQuerySchema>;
 
-export const CreateMemoryBodySchema = MemoryWriteSchema.extend({ scope: RawScopeSchema });
+// `tags` carries no default here: the handler needs to tell an OMITTED tag list
+// from an empty one, because an `edit` (00126) keeps the stored tags when they
+// are omitted. A plain write still stores `[]` for an omitted list (the
+// handler's `?? []`).
+export const CreateMemoryBodySchema = MemoryWriteSchema.extend({ scope: RawScopeSchema, tags: z.array(z.string()).optional() });
 export type CreateMemoryBody = z.infer<typeof CreateMemoryBodySchema>;
 
 /**
@@ -948,7 +958,7 @@ export const UpdateMemoryBodySchema = MemoryWriteSchema
   .omit({
     scope: true, key: true, created_at: true, org: true, cited: true,
     origin_repo: true, origin_branch: true, origin_commit: true, origin_pr: true,
-    attributes: true, content_type: true, supersedes: true,
+    attributes: true, content_type: true, supersedes: true, edit: true,
   }).partial()
   .refine((d) => Object.keys(d).some((k) => d[k as keyof typeof d] !== undefined), { message: 'PATCH body must contain at least one field' });
 export type UpdateMemoryBody = z.infer<typeof UpdateMemoryBodySchema>;

@@ -63,6 +63,8 @@ export const WriteInputSchema = z.object({
   supersedes: z.string().optional(),
   // Optimistic concurrency (00120): the version last read; 0 = must not exist.
   expected_version: z.number().optional(),
+  // Maintenance edit (00126): update the existing record, keep seen_count, never create.
+  edit: z.boolean().optional(),
 });
 
 export type WriteInput = z.infer<typeof WriteInputSchema>;
@@ -115,6 +117,7 @@ export async function write(
       if (origin.branch) span.setAttribute('lorekit.origin.branch', origin.branch);
       if (origin.commit) span.setAttribute('lorekit.origin.commit', origin.commit);
       if (origin.pr !== null) span.setAttribute('lorekit.origin.pr', origin.pr);
+      if (record.edit) span.setAttribute('lorekit.write.edit', true);
 
       try {
         // 00003 replaced the plain unique constraint with PARTIAL indexes
@@ -133,7 +136,8 @@ export async function write(
             p_scope: input.scope,
             p_key: input.key,
             p_value: input.value,
-            p_tags: input.tags,
+            // An edit (00126) sends NULL for omitted tags: "keep the stored tags".
+            p_tags: record.edit && (raw as { tags?: unknown } | null)?.tags === undefined ? null : input.tags,
             p_source_agent: input.source_agent ?? null,
             p_trigger: input.trigger ?? null,
             p_created_at: createdAt,
@@ -151,6 +155,8 @@ export async function write(
             p_supersedes: record.supersedes,
             // Omitted = unchecked, exactly as before 00120.
             ...(record.expectedVersion !== null ? { p_expected_version: record.expectedVersion } : {}),
+            // Sent only when set (00126).
+            ...(record.edit ? { p_edit: true } : {}),
           })
           .single();
 

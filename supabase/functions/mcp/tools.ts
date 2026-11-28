@@ -169,7 +169,7 @@ export async function toolWrite(
   // argument rather than a parameter threaded through all twelve.
   correlationId?: string | null,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host, cited, attributes, content_type, supersedes, expected_version } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host, cited, attributes, content_type, supersedes, expected_version, edit } = params;
   if (!rawScope || !key || !value) throw new UserInputError('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new UserInputError(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
@@ -184,7 +184,8 @@ export async function toolWrite(
   // Record extensions (00119): open attributes, the value's content type, and
   // the id this record supersedes. Null means "keep what is stored". And the
   // optimistic-concurrency check (00120): null means "unchecked".
-  const record = parseRecordFields({ attributes, content_type, supersedes, expected_version }, value);
+  // A maintenance edit (00126): keeps seen_count and refuses a missing key.
+  const record = parseRecordFields({ attributes, content_type, supersedes, expected_version, edit }, value);
   // Taxonomy: explicit kind/host win; otherwise recover them from the loop tag.
   // The shared resolver is the one place the closed-vocabulary check and the
   // host-length clamp live, so storage and usage tracking classify identically.
@@ -211,6 +212,7 @@ export async function toolWrite(
     ...(record.contentType ? { 'lorekit.content_type': record.contentType } : {}),
     ...(record.supersedes ? { 'lorekit.supersedes': true } : {}),
     ...(record.expectedVersion !== null ? { 'lorekit.expected_version': record.expectedVersion } : {}),
+    ...(record.edit ? { 'lorekit.write.edit': true } : {}),
   });
 
   // 00003 replaced the plain unique constraint with PARTIAL indexes
@@ -224,7 +226,8 @@ export async function toolWrite(
       p_scope: scope,
       p_key: key,
       p_value: value,
-      p_tags: tags,
+      // An edit (00126) sends NULL for omitted tags: "keep the stored tags".
+      p_tags: record.edit && params.tags === undefined ? null : tags,
       p_source_agent: source_agent ?? null,
       p_trigger: trigger ?? null,
       p_created_at: createdAt,
@@ -243,6 +246,9 @@ export async function toolWrite(
       // Sent only when given, so an unchecked write is the exact call it was
       // before 00120. The RPC holds the check and the write in one statement.
       ...(record.expectedVersion !== null ? { p_expected_version: record.expectedVersion } : {}),
+      // Sent only when set (00126): the RPC updates the live row, keeps
+      // seen_count, and raises memory_not_found instead of creating one.
+      ...(record.edit ? { p_edit: true } : {}),
       // The calling key's restriction, BOTH axes (00068/00069). The RPC is the
       // LAST gate on the write path — the edge runs on the service-role client,
       // so the dispatcher's check above it is advisory — and it is also the only

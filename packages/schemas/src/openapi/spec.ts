@@ -235,8 +235,8 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.registerPath({
     method: 'post', path: '/memories', summary: 'Create or update a memory', tags: ['Memories'],
     security, request: { body: { content: { 'application/json': { schema: CreateMemoryBodySchema } } } },
-    description: 'With `expected_version`, the write is conditional: a `409` with `code: "version_conflict"` and the stored `current_version` means nothing was written (`0` = the memory must not exist yet).',
-    responses: { 201: memoryResponse('Created'), 400: errorResponse, 401: errorResponse, 409: errorResponse, 429: errorResponse },
+    description: 'With `expected_version`, the write is conditional: a `409` with `code: "version_conflict"` and the stored `current_version` means nothing was written (`0` = the memory must not exist yet). With `edit: true`, the write is a maintenance edit: it changes the existing memory for `scope`+`key` without counting a sighting (`seen_count` is unchanged; omitted `tags`, `source_agent` and `trigger` keep their stored values) and never creates one — a key with no live memory is a `404` with `code: "not_found"`.',
+    responses: { 201: memoryResponse('Created'), 400: errorResponse, 401: errorResponse, 404: errorResponse, 409: errorResponse, 429: errorResponse },
   });
   registry.registerPath({
     method: 'post', path: '/memories/search', summary: 'Search memories with OR+AND filtering', tags: ['Memories'],
