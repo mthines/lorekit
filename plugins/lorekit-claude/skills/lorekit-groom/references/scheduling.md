@@ -44,6 +44,11 @@ lorekit policy update <id> --mode auto --enabled
 ✓ policy create --mode review …  →  groom --policy-id <id>  →  policy update <id> --mode auto --enabled
 ```
 
+- **Condition on opens, never on reads.** `--unseen-days` and
+  `--max-opened-count` count deliberate single-lesson reads. Do not use
+  `--max-read-count` to find unused lessons: every listing, including the weekly
+  report job below, adds a bulk read to each row it returns, so that condition
+  would never match a lesson the report looked at.
 - **Always set `--max-seen-count 1` (or similarly low).** A lesson that recurred
   is a promotion candidate, not a prune candidate, however long since it was
   opened.

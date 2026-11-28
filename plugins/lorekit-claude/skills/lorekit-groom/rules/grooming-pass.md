@@ -43,7 +43,18 @@ find them:
 | `seen_count` | recurrence — `>= 3` marks a promotion candidate for the slow tier |
 | `expires_at` | `null` means the lesson never decays — a TTL candidate |
 | `last_opened_at` / `opened_count` | when (and how often) an agent deliberately opened it |
-| `last_read_at` / `read_count` | when (and how often) it reached a run at all |
+| `last_read_at` / `read_count` | when (and how often) it appeared in any listing, **including this pass's own** |
+
+**Judge use by `last_opened_at`, never by `last_read_at`.** Every `list`,
+`search`, and `dedupe` call (CLI or MCP) records a bulk read on each row it
+returns, so the survey you just ran refreshed `last_read_at` and raised
+`read_count` on every lesson in the scope. Only a deliberate single-lesson read
+(`show`, `memory.read`) moves the open counters.
+
+```text
+✗ prune where last_read_at is older than 90 days   # this pass's own list just set it to today
+✓ prune where last_opened_at is older than 90 days (or null) and seen_count is 1
+```
 
 A lesson nobody has opened in months, with `seen_count` 1, is a prune
 candidate; a lesson with a high `seen_count` is a promotion candidate, never a

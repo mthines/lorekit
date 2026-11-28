@@ -117,8 +117,9 @@ independently builds BOTH stores via `src/shared/stores.mjs` + renders via the r
 on; the shared deny-wins block those five read commands all use is extracted into
 `resolveDenies(root,{env})` in `control.mjs`. Each `--json` entry also carries the lifecycle
 fields a grooming pass judges a lesson on — `seen_count` (recurrence, the promotion signal),
-`expires_at`, `read_count`, `opened_count`, `last_read_at`, `last_opened_at` (activity, the prune
-signal) — passed through verbatim from the hosted `GET /memories` row, `null` when a store does not
+`expires_at`, `read_count`, `opened_count`, `last_read_at`, `last_opened_at` (activity; the prune
+signal is the open pair, since every listing — this one included — records a bulk read that moves
+`read_count`/`last_read_at` on each row it returns) — passed through verbatim from the hosted `GET /memories` row, `null` when a store does not
 report one (the local store keeps `seen_count`/`expires_at` but no read counters); MCP `memory.list`
 still omits `seen_count` (D4)
 
