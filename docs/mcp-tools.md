@@ -206,8 +206,8 @@ The edit changes the value, tags, and fields like any update (attributes merge,
 `seen_count` and `created_at` unchanged, and keeps the stored `tags`,
 `source_agent`, and `trigger` when they are omitted. It never creates a memory:
 on a key with no live memory (absent, archived, or expired) it writes nothing and
-returns an `isError` result (REST: `404 not_found`) with
-`memory_not_found: scope=<scope> key=<key>`. Over REST the same flag is
+returns an `isError` result (REST: `404 not_found`) whose text starts
+`MemoryNotFoundError: memory_not_found: no live memory <scope>::<key> to edit.` Over REST the same flag is
 `POST /memories` with `"edit": true`; `PATCH /memories/:id` already edits by id
 without counting a sighting.
 
