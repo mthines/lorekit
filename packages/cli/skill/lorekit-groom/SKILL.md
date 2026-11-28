@@ -12,13 +12,13 @@ description: >
   Triggers on "groom my memories", "clean up my lessons", "dedupe the memory
   store", "merge duplicate lessons", "too many memories", "my lorekit is a
   mess", "consolidate lessons", "add expiry dates to old lessons", "prune stale
-  branch lessons", "lint my memories", "/lorekit-groom".
+  branch lessons", "lint my memories", "schedule grooming", "/lorekit-groom".
 user-invocable: true
 argument-hint: '[scope-hint]'
 license: MIT
 metadata:
   author: mthines
-  version: '1.1.0'
+  version: '1.2.0'
   workflow_type: shared-memory-grooming-and-consolidation
   tags:
     - lorekit
@@ -172,6 +172,24 @@ Merging, expiry tiers, and the archive-vs-delete call each have real judgement
 in them — the details, with examples, live in
 [references/merge-and-expiry.md](./references/merge-and-expiry.md). Read it
 before your first merge or TTL decision in a pass.
+
+---
+
+## Grooming on a schedule
+
+When asked to keep a store groomed over time (not one pass), split the work by
+who may do it unattended:
+
+| Work | Runs as | Mutates? |
+|------|---------|----------|
+| Prune lessons nobody opens | a retention policy, `review` mode first, then `auto` for the nightly sweep | archive only |
+| Report lint, dedupe, promotion, and prune candidates | a weekly scheduled job with a read-only token | never |
+| Merge, promote into a rule, delete | a human, from that report | after confirmation |
+
+Never schedule a job that merges or deletes on its own: that skips the
+confirmation this skill exists for. Policy conditions, the report job's steps,
+cadence, and how to tell the schedule is working:
+[references/scheduling.md](./references/scheduling.md).
 
 ---
 

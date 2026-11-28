@@ -115,7 +115,12 @@ value flag, or a mode without its value flag, is a usage error rather than an un
 independently builds BOTH stores via `src/shared/stores.mjs` + renders via the reusable
 `src/shared/lessons-view.mjs`, the seam all the `search`/`show`/`stats`/`diff` read commands stack
 on; the shared deny-wins block those five read commands all use is extracted into
-`resolveDenies(root,{env})` in `control.mjs`
+`resolveDenies(root,{env})` in `control.mjs`. Each `--json` entry also carries the lifecycle
+fields a grooming pass judges a lesson on — `seen_count` (recurrence, the promotion signal),
+`expires_at`, `read_count`, `opened_count`, `last_read_at`, `last_opened_at` (activity, the prune
+signal) — passed through verbatim from the hosted `GET /memories` row, `null` when a store does not
+report one (the local store keeps `seen_count`/`expires_at` but no read counters); MCP `memory.list`
+still omits `seen_count` (D4)
 
 ### `search`
 
@@ -246,7 +251,11 @@ bare flag or unparseable regex is a usage error at exit 1, and so is combining i
 `--threshold` (key mode has no similarity cutoff, so the flag would otherwise be silently ignored —
 a repo-level `dedupe.threshold` stays a value-mode default and never breaks a key-mode run);
 `--json` reports `mode:"key"` + `keyPattern` and each cluster carries `keyGroup` instead of a
-similarity range]; per-store across scopes; `--json`/`--scope`/`--threshold` [default 0.8]
+similarity range]; per-store across scopes; `--json`/`--scope`/`--threshold` [default 0.8];
+in both modes each `--json` cluster member is `{ scope, key }` plus `seen_count`, `expires_at`,
+`created`, `updated`, `read_count`, `opened_count`, `last_read_at`, `last_opened_at`, `tags`,
+`version` [`null` when the store does not report one] and a one-line `preview` of the value, so the
+keeper of a merge and the prune candidates are chosen from one run instead of a `show` per member
 
 ### `obligations`
 
