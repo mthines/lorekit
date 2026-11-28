@@ -119,7 +119,9 @@ on a key with no live memory instead of creating one.
 ```text
 ✗ memory.write { scope, key, value: "<trimmed>" }               # seen_count 1 → 2: a fake recurrence
 ✓ memory.write { scope, key, value: "<trimmed>", edit: true }   # seen_count stays 1
-``` `lint` exits non-zero while findings remain, which also
+```
+
+`lint` exits non-zero while findings remain, which also
 makes it a clean CI gate — a passing `lint` is your Phase 6 proof.
 
 ### Cleaning a `hidden-metadata` finding (fold, then strip)
