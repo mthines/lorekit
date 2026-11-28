@@ -450,6 +450,8 @@ ${c.bold('Options')}
       --content-type <t>   text/markdown (default) or application/json (value must parse)
       --supersedes <id>    The id of the memory this one replaces
       --expected-version <n>  Write only if the memory is still at version n (0 = must not exist yet)
+      --edit               Maintenance edit: change an existing memory without counting a sighting
+                           (seen_count unchanged, omitted tags kept, no provenance derived); fails if missing
       --origin-repo <o/n>  Override the derived provenance repository
       --origin-branch <b>  Override the derived provenance branch
       --origin-commit <s>  Override the derived provenance commit SHA
@@ -1181,7 +1183,7 @@ const KNOWN_FLAGS = [
   'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'mcp-json', 'completions', 'complete', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'key', 'threshold', 'help', 'version', 'telemetry',
   'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'cited',
-  'attributes', 'content-type', 'supersedes', 'expected-version',
+  'attributes', 'content-type', 'supersedes', 'expected-version', 'edit',
   'remote', 'local',
   // `view` is accepted-and-IGNORED, not documented: the Explorer dropped the
   // scope/time tab so the flag is a no-op, but `link` is a HUMAN_COMMAND that
@@ -1227,7 +1229,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'clear-max-read-count', 'clear-max-opened-count', 'strict', 'strict-all', 'clear-tags', 'clear-source-agent', 'clear-trigger', 'clear-kind', 'clear-host', 'clear-origin-repo', 'clear-origin-branch', 'clear-origin-pr', 'check'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'edit', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'clear-max-read-count', 'clear-max-opened-count', 'strict', 'strict-all', 'clear-tags', 'clear-source-agent', 'clear-trigger', 'clear-kind', 'clear-host', 'clear-origin-repo', 'clear-origin-branch', 'clear-origin-pr', 'check'],
     known: KNOWN_FLAGS,
   });
 

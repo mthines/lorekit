@@ -212,7 +212,9 @@ const MEMORY_DISPATCH = {
   // An agent calling memory.write knows the lesson, not the working directory
   // it is running in. Fill in whatever provenance the environment can supply,
   // with anything the caller DID pass taking precedence.
-  'memory.write': (store, a, ctx) => store.write({ ...a, ...withDerivedOrigin(a, ctx) }),
+  // An edit (00126) changes an existing lesson and must not restamp where it
+  // was recorded, so it gets no derived origin, only what the caller passed.
+  'memory.write': (store, a, ctx) => store.write(a.edit ? a : { ...a, ...withDerivedOrigin(a, ctx) }),
   'memory.read': (store, a) => store.read(a),
   // `view` is projected and `kind`/`host` post-filtered client-side rather than
   // forwarded. The remote store reads `GET /memories`, which has no `view`
