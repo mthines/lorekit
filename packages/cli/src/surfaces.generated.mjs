@@ -178,6 +178,10 @@ export const MCP_TOOL_DEFS = [
           "type": "integer",
           "minimum": 0,
           "description": "Optimistic concurrency: the `version` you last read. If the stored version differs, the write is rejected with `version_conflict` (naming the current version) and nothing changes. `0` means the memory must not exist yet. An archived or expired memory counts as absent (version `0`), exactly as reads hide it; an expired one is rewritten in place, and with no `ttl_days` / `clear_ttl` on that write its past expiry is cleared. Omit for an unconditional write."
+        },
+        "edit": {
+          "type": "boolean",
+          "description": "Maintenance edit: change an existing memory without counting it as a new sighting. `seen_count` stays as stored, `tags`, `source_agent` and `trigger` you omit keep their stored values, and a scope+key with no live memory (none, archived, or expired) is refused with `memory_not_found` instead of being created. Use it when fixing a lesson in place (trimming, re-tagging, rewriting a header); omit it when you are recording the lesson again, which is the next sighting."
         }
       }
     },

@@ -3533,8 +3533,8 @@ declare
   -- 00069 appended the key restriction (p_key_scopes, p_key_org_access,
   -- p_key_org_ids → 20 args); 00119 inserted p_attributes, p_content_type and
   -- p_supersedes after p_host (23 args); 00120 appended p_expected_version
-  -- (24 args).
-  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text, jsonb, text, uuid, text[], text, uuid[], integer)';
+  -- (24 args); 00126 appended p_edit (25 args).
+  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text, jsonb, text, uuid, text[], text, uuid[], integer, boolean)';
 begin
   assert has_function_privilege('anon', v_sig, 'EXECUTE'),
     'origin: anon must have EXECUTE on the widened memory_write';
@@ -12561,6 +12561,100 @@ begin
                       where stats_since is distinct from
                             (select stats_reset from pg_stat_database where datname = current_database())),
     '125 AC-1: stats_since must be this database''s stats_reset';
+end;
+$$;
+
+
+-- §126 — 00126: `memory_write(p_edit)`, a maintenance edit that is not a
+-- sighting. An edit changes an existing live row and keeps `seen_count`; a
+-- plain write to the same key still adds 1; an edit of a missing, archived or
+-- expired key raises `memory_not_found` and writes nothing.
+do $$
+declare
+  u        uuid := '00000000-0000-0000-0000-0000000000a1';
+  r        record;
+  v_id     uuid;
+  v_seen   int;
+  v_count  int;
+  v_raised boolean;
+begin
+  perform memory_write(p_user_id => u, p_scope => 'global', p_key => 'mig-126-edit',
+                       p_value => 'first', p_tags => array['a'], p_source_agent => 'agent-1');
+  perform memory_write(p_user_id => u, p_scope => 'global', p_key => 'mig-126-edit',
+                       p_value => 'second', p_tags => array['a'], p_source_agent => 'agent-1');
+  select id, seen_count into v_id, v_seen from memories
+   where user_id = u and scope = 'global' and key = 'mig-126-edit' and archived_at is null;
+  assert v_seen = 2, format('126 AC-2: setup: two plain writes must give seen_count 2, got %s', v_seen);
+
+  -- AC-1: the edit changes value and tags, keeps seen_count, created_at and id,
+  -- and keeps an omitted source_agent.
+  select * into r from memory_write(p_user_id => u, p_scope => 'global', p_key => 'mig-126-edit',
+                                    p_value => 'trimmed', p_tags => array['a', 'status::promoted'],
+                                    p_edit => true);
+  assert r.id = v_id, '126 AC-1: an edit must update the existing row, not create one';
+  assert r.inserted = false, '126 AC-1: an edit must report inserted = false';
+  assert r.value = 'trimmed', format('126 AC-1: the edit must change the value, got %s', r.value);
+  assert r.tags = array['a', 'status::promoted'], format('126 AC-1: the edit must change the tags, got %s', r.tags);
+  assert r.seen_count = 2, format('126 AC-1: an edit must keep seen_count at 2, got %s', r.seen_count);
+  assert r.source_agent = 'agent-1', format('126 AC-1: an omitted source_agent must be kept, got %s', r.source_agent);
+  select seen_count into v_seen from memories where id = v_id;
+  assert v_seen = 2, format('126 AC-1: the stored seen_count must stay 2 after an edit, got %s', v_seen);
+
+  -- AC-1: NULL tags on an edit keep the stored tags.
+  select * into r from memory_write(p_user_id => u, p_scope => 'global', p_key => 'mig-126-edit',
+                                    p_value => 'trimmed again', p_tags => null, p_edit => true);
+  assert r.tags = array['a', 'status::promoted'], format('126 AC-1: omitted tags must be kept on an edit, got %s', r.tags);
+  assert r.seen_count = 2, format('126 AC-1: a second edit must still keep seen_count 2, got %s', r.seen_count);
+
+  -- AC-1: expected_version still gates an edit.
+  v_raised := false;
+  begin
+    perform memory_write(p_user_id => u, p_scope => 'global', p_key => 'mig-126-edit',
+                         p_value => 'stale', p_edit => true, p_expected_version => 1);
+  exception when sqlstate 'LK003' then v_raised := true;
+  end;
+  assert v_raised, '126 AC-1: an edit with a stale expected_version must raise version_conflict';
+
+  -- AC-2: a plain write after the edits is still the next sighting.
+  select * into r from memory_write(p_user_id => u, p_scope => 'global', p_key => 'mig-126-edit',
+                                    p_value => 'seen again', p_tags => array['a']);
+  assert r.seen_count = 3, format('126 AC-2: a plain write must still add 1 to seen_count (2 -> 3), got %s', r.seen_count);
+
+  -- AC-3: an edit of a missing key raises memory_not_found and creates nothing.
+  v_raised := false;
+  begin
+    perform memory_write(p_user_id => u, p_scope => 'global', p_key => 'mig-126-missing',
+                         p_value => 'x', p_edit => true);
+  exception when sqlstate 'P0002' then
+    v_raised := sqlerrm like 'memory_not_found:%';
+  end;
+  assert v_raised, '126 AC-3: an edit of a missing key must raise memory_not_found';
+  select count(*) into v_count from memories where key = 'mig-126-missing';
+  assert v_count = 0, format('126 AC-3: an edit of a missing key must create no row, found %s', v_count);
+
+  -- AC-3: an archived or expired key is missing to an edit too.
+  update memories set archived_at = now() where id = v_id;
+  v_raised := false;
+  begin
+    perform memory_write(p_user_id => u, p_scope => 'global', p_key => 'mig-126-edit',
+                         p_value => 'revive', p_edit => true);
+  exception when sqlstate 'P0002' then v_raised := true;
+  end;
+  assert v_raised, '126 AC-3: an edit of an archived key must raise memory_not_found';
+
+  perform memory_write(p_user_id => u, p_scope => 'global', p_key => 'mig-126-expired', p_value => 'x');
+  update memories set expires_at = now() - interval '1 day'
+   where user_id = u and key = 'mig-126-expired' and archived_at is null;
+  v_raised := false;
+  begin
+    perform memory_write(p_user_id => u, p_scope => 'global', p_key => 'mig-126-expired',
+                         p_value => 'revive', p_edit => true);
+  exception when sqlstate 'P0002' then v_raised := true;
+  end;
+  assert v_raised, '126 AC-3: an edit of an expired key must raise memory_not_found';
+  select count(*) into v_count from memories where key in ('mig-126-edit', 'mig-126-expired') and archived_at is null
+     and value = 'revive';
+  assert v_count = 0, '126 AC-3: a refused edit must write nothing';
 end;
 $$;
 

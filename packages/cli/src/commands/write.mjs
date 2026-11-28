@@ -41,6 +41,12 @@
 //                          still at version n (0 = it must not exist yet). A
 //                          mismatch writes nothing, names the stored version,
 //                          and exits non-zero
+//   --edit                 Maintenance edit (00126): change the existing memory
+//                          without counting a sighting. seen_count stays as
+//                          stored, omitted tags / source agent / trigger keep
+//                          their stored values, no provenance or configured
+//                          default TTL is applied, and a key with no live
+//                          memory is refused (exit 1) instead of being created
 //
 // `--cited` credits the lore that shaped the work being written up. It is the
 // only signal that distinguishes a lesson that was read from one that was used:
@@ -211,6 +217,10 @@ export async function write(args) {
     }
   }
   const clearTtl = Boolean(args['clear-ttl']);
+  // A maintenance edit (00126) is not a new sighting, and it must not restamp
+  // what the original write recorded either: no configured default TTL (below)
+  // and no derived provenance (further down) — only what the flags say.
+  const isEdit = Boolean(args.edit);
 
   // Neither flag given → fall back to the scope's configured default, if any.
   // `--clear-ttl` deliberately suppresses it: "make this permanent" has to mean
@@ -218,7 +228,7 @@ export async function write(args) {
   // through the same loadControl the hooks use, so the default the nudge advises
   // and the default this command applies can never diverge.
   let ttlSource = ttlDays ? 'flag' : 'none';
-  if (ttlDays === undefined && !clearTtl) {
+  if (ttlDays === undefined && !clearTtl && !isEdit) {
     const configured = resolveDefaultTtlDays(scope, loadControl(root, { env }));
     if (configured != null) {
       ttlDays = configured;
@@ -312,7 +322,7 @@ export async function write(args) {
 
   const origin = args['no-origin']
     ? {}
-    : mergeOrigin(deriveOrigin({ cwd: root, env }), {
+    : mergeOrigin(isEdit ? {} : deriveOrigin({ cwd: root, env }), {
         origin_repo: typeof args['origin-repo'] === 'string' ? args['origin-repo'] : null,
         origin_branch: typeof args['origin-branch'] === 'string' ? args['origin-branch'] : null,
         origin_commit: typeof args['origin-commit'] === 'string' ? args['origin-commit'] : null,
@@ -399,6 +409,7 @@ export async function write(args) {
     ...(contentType ? { content_type: contentType } : {}),
     ...(supersedes ? { supersedes } : {}),
     ...(expectedVersion !== undefined ? { expected_version: expectedVersion } : {}),
+    ...(isEdit ? { edit: true } : {}),
     ...origin,
   };
 
@@ -422,6 +433,11 @@ export async function write(args) {
       err(`Re-read it (${c.cyan(`lorekit show ${scope}::${key}`)}), then retry with --expected-version ${current ?? '<current>'}.`);
       return { exitCode: 1, 'lorekit.cli.write.store': storeName, 'lorekit.cli.write.version_conflict': true };
     }
+    if (isEdit && (code === 'not_found' || code === 'memory_not_found')) {
+      err(`${c.red('Error:')} no live memory ${scope}::${key} to edit. Nothing was written.`);
+      err(`--edit only changes an existing memory; drop --edit to create it.`);
+      return { exitCode: 1, 'lorekit.cli.write.store': storeName, 'lorekit.cli.write.edit': true, 'lorekit.cli.write.not_found': true };
+    }
     err(`${c.red('Error writing to')} ${storeName} store: ${detail}`);
     return 1;
   }
@@ -433,6 +449,15 @@ export async function write(args) {
   // result, the local store on the entry it wrote. Null when unknown.
   const version = result.version ?? result.entry?.version ?? null;
 
+  // A server that predates 00126 drops the unknown `edit` key and does a plain
+  // upsert: it counts a sighting, or creates a missing key. The remote store
+  // reports `edit: false` when the server did not acknowledge the edit.
+  if (isEdit && result.edit === false) {
+    err(`${c.red('Error:')} the ${storeName} store does not support --edit: it wrote ${scope}::${key} as a normal write, which counted a sighting or created the key.`);
+    err(`Upgrade the server before editing; check the memory with ${c.cyan(`lorekit show ${scope}::${key}`)}.`);
+    return { exitCode: 1, 'lorekit.cli.write.store': storeName, 'lorekit.cli.write.edit': true, 'lorekit.cli.write.edit_unsupported': true };
+  }
+
   if (args.json) {
     log(JSON.stringify({
       scope,
@@ -440,6 +465,8 @@ export async function write(args) {
       store: storeName,
       inserted,
       version,
+      edit: isEdit,
+      seen_count: result.seen_count ?? result.entry?.seen_count ?? null,
       value: String(value),
       tags,
       source_agent: sourceAgent || null,
@@ -450,7 +477,7 @@ export async function write(args) {
       origin,
     }, null, 2));
   } else {
-    const verb = inserted === true ? 'Created' : inserted === false ? 'Updated' : 'Written';
+    const verb = isEdit ? 'Edited' : inserted === true ? 'Created' : inserted === false ? 'Updated' : 'Written';
     heading('LoreKit memory written');
     log(`  ${c.dim('store')}  ${storeName}`);
     log(`  ${c.dim('scope')}  ${scope}`);
@@ -476,5 +503,6 @@ export async function write(args) {
     'lorekit.cli.write.has_ttl': Boolean(reportedTtlDays),
     'lorekit.cli.write.ttl_source': reportedTtlSource,
     'lorekit.cli.write.clear_ttl': clearTtl,
+    'lorekit.cli.write.edit': isEdit,
   };
 }

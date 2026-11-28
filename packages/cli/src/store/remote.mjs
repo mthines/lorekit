@@ -370,7 +370,7 @@ class RemoteStore {
     const {
       scope, key, value, tags, source_agent, trigger, kind, host, org, ttl_days, clear_ttl, created_at,
       cited, origin_repo, origin_branch, origin_commit, origin_pr,
-      attributes, content_type, supersedes, expected_version,
+      attributes, content_type, supersedes, expected_version, edit,
     } = args;
     const body = { scope, key, value };
     if (tags !== undefined) body.tags = tags;
@@ -403,6 +403,10 @@ class RemoteStore {
     // version keeps the unconditional write. A mismatch is a 409 whose error
     // carries `code: 'version_conflict'` and the stored version.
     if (expected_version !== undefined) body.expected_version = expected_version;
+    // Maintenance edit (00126): sent only when set, so a plain write is the
+    // exact request it was before. The server keeps seen_count and answers a
+    // key with no live memory with 404 `not_found`.
+    if (edit) body.edit = true;
     const res = await this._rest('/memories', { method: 'POST', body });
     // `httpStatus` and `retryAfter` are passed through so a caller can tell the
     // two 429s apart and honour the server's own backoff. They are DIFFERENT
@@ -428,6 +432,16 @@ class RemoteStore {
       // The record's version after the write (00120), or null when the write
       // failed or the server predates the column. Additive.
       version: Number.isInteger(res.data?.version) ? res.data.version : null,
+      // The recurrence count after the write, so a caller can see an edit kept
+      // it. Null when the write failed or the server did not report it.
+      seen_count: Number.isInteger(res.data?.seen_count) ? res.data.seen_count : null,
+      // Surfaced for the caller's branching (`not_found` on an edit of a
+      // missing key, `version_conflict`), from the error body's `code`.
+      code: res.error?.code ?? null,
+      // Whether the server applied the write as an edit (00126 echoes
+      // `edit: true`). Only reported for an edit request; an older server
+      // ignores the flag, which reads here as `false`.
+      ...(edit && res.ok ? { edit: res.data?.edit === true } : {}),
     };
   }
 

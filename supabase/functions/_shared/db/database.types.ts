@@ -1307,6 +1307,7 @@ export type Database = {
           p_content_type?: string
           p_created_at?: string
           p_expected_version?: number
+          p_edit?: boolean
           p_key: string
           p_key_org_access?: string
           p_key_org_ids?: string[]
@@ -1319,7 +1320,7 @@ export type Database = {
           p_scope: string
           p_source_agent?: string
           p_supersedes?: string
-          p_tags?: string[]
+          p_tags?: string[] | null
           p_trigger?: string
           p_ttl_seconds?: number
           p_user_id: string

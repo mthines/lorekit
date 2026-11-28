@@ -462,6 +462,22 @@ before the field existed reads as version `1`. `write` reports the new version (
   `version conflict — global::k is at version 4, not 3. Nothing was written.` Works against both
   stores; remotely the check is atomic in the `memory_write` RPC (`409 version_conflict`).
 
+**`--edit`: change a memory without counting a sighting (migration 00126).** A plain `write` to an
+existing key adds 1 to `seen_count`; `lorekit write --edit` does not. Use it for
+every maintenance fix (trimming, re-tagging, folding hidden metadata, setting a TTL): the value,
+tags, and other given fields change, `seen_count` stays as stored, and an omitted `--tags`,
+`--source-agent`, or `--trigger` keeps the stored value. An edit derives no git provenance and
+applies no configured default TTL, so it never restamps where a lesson came from. It never creates
+a memory: on a key with no live memory it writes nothing and exits `1` with
+`no live memory <scope::key> to edit. Nothing was written.` `--json` adds `edit` and `seen_count`.
+Works against both stores; remotely it is `POST /memories` with `"edit": true` (`404 not_found` on a
+missing key). The server acknowledges the edit with `"edit": true` in its response; against a server
+that predates it, which writes normally, `--edit` exits `1` instead of reporting an edit.
+
+```bash
+lorekit write repo::acme/api::db-migrations-need-explicit-tx "<the fixed body>" --edit   # seen_count unchanged
+```
+
 `show` also prints `superseded by <id>, …` when other live records name this one in their
 `supersedes` (newest first; `superseded_by` in `--json`). Locally that is computed across both store
 tiers on `show`/`read`; `list` and `search` do not compute it offline, because it would cost a walk

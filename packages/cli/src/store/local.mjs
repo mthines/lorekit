@@ -165,7 +165,7 @@ class LocalStore {
   async write({
     scope, key, value, tags, source_agent, trigger, created_at, ttl_days, clear_ttl,
     origin_repo, origin_branch, origin_commit, origin_pr, kind, host,
-    attributes, content_type, supersedes, expected_version, _resolved,
+    attributes, content_type, supersedes, expected_version, edit, _resolved,
   } = {}) {
     const now = new Date().toISOString();
     const existing = this._findByKey(scope, key);
@@ -230,6 +230,17 @@ class LocalStore {
         };
       }
     }
+    // A maintenance edit (00126), the local twin of `memory_write(p_edit)`: it
+    // changes this store's LIVE copy and never creates one, so a key that is
+    // absent, archived, or expired here is refused, exactly as on the server.
+    const editTarget = live && isLive(live) ? live : null;
+    if (edit && !editTarget) {
+      return {
+        ok: false,
+        code: 'not_found',
+        error: `memory_not_found: no live memory ${scope}::${key} to edit. An edit only changes an existing memory; write without edit to create it.`,
+      };
+    }
     let override, expires_at;
     try {
       override = normalizeCreatedAt(created_at);
@@ -248,7 +259,8 @@ class LocalStore {
     const dir = this._dir(scope);
     fs.mkdirSync(dir, { recursive: true });
     const created = existing ? existing.entry.created || now : override || now;
-    const nextTags = Array.isArray(tags) ? tags : [];
+    // An edit keeps the stored tags when it names none; a plain write replaces them.
+    const nextTags = Array.isArray(tags) ? tags : (edit ? (editTarget.tags ?? []) : []);
     const nextValue = value == null ? '' : String(value);
     const nextSupersedes = supersedesId ?? live?.supersedes ?? null;
     const entry = {
@@ -257,8 +269,8 @@ class LocalStore {
       scope,
       key,
       tags: nextTags,
-      source_agent: source_agent || null,
-      trigger: trigger || null,
+      source_agent: source_agent || (edit ? editTarget.source_agent ?? null : null),
+      trigger: trigger || (edit ? editTarget.trigger ?? null : null),
       // Provenance keeps the last KNOWN value per field, mirroring the hosted
       // memory_write upsert: a write that does not know a field must not erase
       // what a previous write recorded.
@@ -286,9 +298,13 @@ class LocalStore {
       // fresh row, while this store revives the file in place (see the docblock
       // above) — but the count means the same thing on both: the lesson was
       // retired and is being learned again, not seen once more.
-      seen_count: existing && !existing.entry.archived_at
-        ? seenCountOf(existing.entry) + 1
-        : 1,
+      //
+      // An EDIT (00126) is not a sighting: the count stays as stored.
+      seen_count: edit
+        ? seenCountOf(editTarget)
+        : existing && !existing.entry.archived_at
+          ? seenCountOf(existing.entry) + 1
+          : 1,
       // Identity: minted once, then kept, so a reference by id survives every
       // rewrite. A revive of an archived key is a NEW record, as on the server
       // (which inserts a fresh row), so it gets a new id and can supersede the
@@ -711,6 +727,15 @@ class TwoTierStore {
   // then shadows home and continues that version). See LocalStore.write.
   async write(args = {}) {
     const resolved = args.key == null ? null : this._read({ scope: args.scope, key: args.key });
+    // An edit (00126) changes the copy a read resolves IN PLACE, in the tier
+    // that holds it: the project tier when it has a live copy, else home. It
+    // never creates a project copy that shadows home (that would be a new
+    // record, which an edit must not make).
+    if (args.edit) {
+      const p = this.projectActive() ? this.project._findByKey(args.scope, args.key) : null;
+      const tier = p && !p.entry.archived_at && isLive(p.entry) ? this.project : this.home;
+      return tier.write({ ...args, _resolved: resolved });
+    }
     return this.tierFor(args.scope).write({ ...args, _resolved: resolved });
   }
 

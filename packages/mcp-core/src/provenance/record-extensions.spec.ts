@@ -82,7 +82,7 @@ describe('parseSupersedes / isMemoryId', () => {
 
 describe('parseRecordFields', () => {
   it('returns all nulls when nothing is supplied, so the RPC keeps what is stored', () => {
-    expect(parseRecordFields({}, 'body')).toEqual({ attributes: null, contentType: null, supersedes: null, expectedVersion: null });
+    expect(parseRecordFields({}, 'body')).toEqual({ attributes: null, contentType: null, supersedes: null, expectedVersion: null, edit: false });
   });
 
   it('requires a JSON body to parse when the content type says JSON', () => {

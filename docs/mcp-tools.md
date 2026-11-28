@@ -59,7 +59,7 @@ The rules behind the split:
   its value. A soft-archive (`memory.archive`, `groom.run`) is non-destructive
   because nothing is lost and `memory.restore` undoes it.
 - **Idempotent** means repeating the same call has no further effect. The
-  exceptions are `memory.write` (each write bumps `seen_count`), `org.create`,
+  exceptions are `memory.write` (each normal write bumps `seen_count`; an `edit: true` write does not), `org.create`,
   and `policy.create`.
 - **Closed-world** applies to every tool, because each one acts only on the
   LoreKit store.
@@ -112,6 +112,7 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `supersedes` | | The `id` of the memory this one replaces. Must name a memory this token can read **and** that has the same owner as the one being written: your own personal memory for a personal write, a memory in the same org for an org write. Anything else, including an id that does not exist, fails with the same error, so the field cannot be used to probe for ids. Kept on update unless re-supplied. |
 | `cited` | | Lessons that shaped this run, as `scope::key` strings or memory ids. Unresolvable entries are dropped silently. |
 | `expected_version` | | Integer ≥ 0. Write only if the memory at `scope`+`key` is still at this `version`; `0` means it must not exist yet. A mismatch writes nothing and fails with `version_conflict`, naming the stored version. Omit for an unconditional write. See **Versions** below. |
+| `edit` | | Boolean. `edit: true` makes a maintenance edit of an existing memory: it counts no sighting (`seen_count` stays as stored), keeps the stored tags when `tags` is omitted, and fails with `memory_not_found` when no live memory has this `scope`+`key`. Omit for a normal write. See **Sightings and edits** below. |
 
 **Provenance (`origin_*`).** `scope` says where a lesson **applies**; the four
 `origin_*` fields say where it was **recorded from**, and the dashboard turns
@@ -190,6 +191,25 @@ result (REST: `409`) with code `version_conflict`:
 ```text
 version_conflict: expected_version 3 does not match the stored version 4. Re-read the memory, then retry with its current version.
 ```
+
+**Sightings and edits.** A normal write to an existing key counts a sighting:
+it adds 1 to `seen_count`, the recurrence signal loops use to promote a lesson.
+A groomer that trims, re-tags, or rewrites a lesson is not seeing it again, so
+it passes `edit: true`:
+
+```json
+{ "scope": "repo::acme/api", "key": "db-migrations-need-explicit-tx", "value": "<the fixed body>", "edit": true }
+```
+
+The edit changes the value, tags, and fields like any update (attributes merge,
+`version` bumps on a content change, `expected_version` still applies), leaves
+`seen_count` and `created_at` unchanged, and keeps the stored `tags`,
+`source_agent`, and `trigger` when they are omitted. It never creates a memory:
+on a key with no live memory (absent, archived, or expired) it writes nothing and
+returns an `isError` result (REST: `404 not_found`) whose text starts
+`MemoryNotFoundError: memory_not_found: no live memory <scope>::<key> to edit.` Over REST the same flag is
+`POST /memories` with `"edit": true`; `PATCH /memories/:id` already edits by id
+without counting a sighting.
 
 `superseded_by` is the reverse of `supersedes`: on `memory.read`,
 `memory.list` and `memory.search`, a memory that other live records name in

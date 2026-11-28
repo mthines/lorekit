@@ -24,7 +24,20 @@ matches. That beats an agent-run prune: it is deterministic, it sees
 
 Write the conditions from the lifecycle fields (the same ones `list --json`
 reports). A lesson is a prune candidate when it is old enough to have been
-needed, nobody has opened it recently, and it never recurred:
+needed, nobody has opened it recently, and it never recurred — **but only in a
+scope whose lessons are read one at a time.**
+
+Lessons loaded through `list` or `search` — the SessionStart hook, a loop's
+intake `memory.search`, a `lorekit list` — never count as opens: those reads
+move `last_read_at`, not `last_opened_at`. In a scope consumed that way, every
+lesson looks unopened however often agents use it, so `--unseen-days` alone
+archives lessons that are still in use. Check how the scope is read before you
+pick a mode:
+
+| How agents read the scope | Policy |
+|---------------------------|--------|
+| Lessons opened one at a time (`show`, `memory.read`) | `--unseen-days` in `auto` mode, after a `review` run |
+| Loaded in bulk (SessionStart hook, intake `memory.search`, `list`) | keep the policy in `review` mode and decide by hand, or rely on TTLs the writer sets; never `auto` on `--unseen-days` |
 
 ```bash
 # 1. Start in review mode: a policy that only reports what it would archive.
@@ -41,11 +54,14 @@ lorekit policy update <id> --mode auto --enabled
 
 ```text
 ✗ policy create --mode auto --enabled --unseen-days 30          # first night archives lessons nobody reviewed
-✓ policy create --mode review …  →  groom --policy-id <id>  →  policy update <id> --mode auto --enabled
+✗ policy update <id> --mode auto  on a scope the SessionStart hook loads   # every lesson looks unopened, so it archives live ones
+✓ policy create --mode review …  →  groom --policy-id <id>  →  policy update <id> --mode auto --enabled   # a scope read one lesson at a time
 ```
 
-- **Condition on opens, never on reads.** `--unseen-days` and
-  `--max-opened-count` count deliberate single-lesson reads. Do not use
+- **Condition on opens, never on reads — and only where opens happen.**
+  `--unseen-days` and `--max-opened-count` count deliberate single-lesson reads,
+  so a lesson loaded through `list` or `search` never counts as opened; in a
+  bulk-loaded scope they match lessons that are still used. Do not use
   `--max-read-count` to find unused lessons: every listing, including the weekly
   report job below, adds a bulk read to each row it returns, so that condition
   would never match a lesson the report looked at.
@@ -98,7 +114,7 @@ again.
 |--------|---------|
 | Under ~50 new lessons a week in the scope | weekly report, or fortnightly |
 | More than that, or several loops writing to one scope | weekly report, plus a key-prefix dedupe per loop (`--key-prefix <loop>-lessons::`) |
-| Branch scopes | rely on the TTL the writer set; a branch policy with `--unseen-days 14` catches the rest |
+| Branch scopes | rely on the TTL the writer set; a `review`-mode branch policy with `--unseen-days 14` lists the rest for a human |
 | A report with nothing to act on three weeks running | halve the cadence |
 
 ## 4. Check the schedule is working

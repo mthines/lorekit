@@ -67,6 +67,8 @@ export interface RecordFields {
   contentType: ContentType | null;
   supersedes: string | null;
   expectedVersion: number | null;
+  /** A maintenance edit (00126): update the existing record, keep `seen_count`, never create. */
+  edit: boolean;
 }
 
 /** The raw, unvalidated write-tool parameters. */
@@ -75,6 +77,7 @@ export interface RecordFieldsInput {
   content_type?: unknown;
   supersedes?: unknown;
   expected_version?: unknown;
+  edit?: unknown;
 }
 
 /**
@@ -97,6 +100,26 @@ export class VersionConflictError extends Error {
     this.name = 'VersionConflictError';
     this.expectedVersion = expectedVersion;
     this.currentVersion = currentVersion;
+  }
+}
+
+/**
+ * An edit (00126) addressed a key with no live record: none, archived, or
+ * expired. A distinct class: REST answers it with 404 and MCP with an
+ * `isError` result, and the fix is a plain write (which creates), not a retry.
+ */
+export class MemoryNotFoundError extends Error {
+  readonly code = 'memory_not_found';
+  readonly scope: string;
+  readonly key: string;
+  constructor(scope: string, key: string) {
+    super(
+      `memory_not_found: no live memory ${scope}::${key} to edit. ` +
+        'An edit only changes an existing memory; write without edit to create it.',
+    );
+    this.name = 'MemoryNotFoundError';
+    this.scope = scope;
+    this.key = key;
   }
 }
 
@@ -174,6 +197,16 @@ export function parseExpectedVersion(input: unknown): number | null {
 }
 
 /**
+ * Validate `edit`: a boolean. Omitted is `false` — a plain write, which counts
+ * as the next sighting.
+ */
+export function parseEdit(input: unknown): boolean {
+  if (input === undefined || input === null) return false;
+  if (typeof input !== 'boolean') throw new RecordFieldError(`edit must be a boolean: ${String(input)}`);
+  return input;
+}
+
+/**
  * Validate and normalise the record-extension write parameters.
  *
  * `value` is the record body: when the write declares `application/json`, the
@@ -197,6 +230,7 @@ export function parseRecordFields(input: RecordFieldsInput, value: string): Reco
     contentType,
     supersedes: parseSupersedes(input.supersedes),
     expectedVersion: parseExpectedVersion(input.expected_version),
+    edit: parseEdit(input.edit),
   };
 }
 
@@ -235,15 +269,21 @@ const DB_FIELD_ERRORS: ReadonlyArray<readonly [string, string]> = [
 /** `memory_write`'s LK003 message (00120): `version_conflict: expected_version=N current_version=M`. */
 const VERSION_CONFLICT_RE = /version_conflict: expected_version=(\d+) current_version=(\d+)/;
 
+/** `memory_write`'s P0002 message for an edit of a missing key (00126). */
+const MEMORY_NOT_FOUND_RE = /memory_not_found: scope=(\S+) key=(\S+)/;
+
 /**
  * Map a database error about a record field to a {@link RecordFieldError}, and
- * `memory_write`'s version refusal to a {@link VersionConflictError}; pass
+ * `memory_write`'s version refusal to a {@link VersionConflictError} and its
+ * edit of a missing key to a {@link MemoryNotFoundError}; pass
  * anything else through.
  */
 export function translateRecordFieldDbError(err: unknown): unknown {
   const message = (err as { message?: string } | null | undefined)?.message ?? '';
   const conflict = VERSION_CONFLICT_RE.exec(message);
   if (conflict) return new VersionConflictError(Number(conflict[1]), Number(conflict[2]));
+  const missing = MEMORY_NOT_FOUND_RE.exec(message);
+  if (missing) return new MemoryNotFoundError(missing[1], missing[2]);
   for (const [marker, text] of DB_FIELD_ERRORS) {
     if (message.includes(marker)) return new RecordFieldError(text);
   }

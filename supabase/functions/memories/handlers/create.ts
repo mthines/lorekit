@@ -15,9 +15,10 @@ import {
   parseRecordFields,
   RecordFieldError,
   translateRecordFieldDbError,
+  MemoryNotFoundError,
   VersionConflictError,
 } from '../../_shared/provenance/record-extensions.ts';
-import { versionConflict } from '../../_shared/api/respond.ts';
+import { notFound, versionConflict } from '../../_shared/api/respond.ts';
 import { resolveKindHost } from '../../_shared/schemas/tags.ts';
 import { recordAuditDeferred } from '../../_shared/audit/audit.ts';
 import { recordCitations } from '../../_shared/telemetry/citations.ts';
@@ -127,7 +128,8 @@ export async function handleCreate(
     p_scope: body.scope,
     p_key: body.key,
     p_value: body.value,
-    p_tags: body.tags ?? [],
+    // An edit (00126) sends NULL for omitted tags: "keep the stored tags".
+    p_tags: body.tags ?? (record.edit ? null : []),
     p_source_agent: body.source_agent ?? null,
     p_trigger: body.trigger ?? null,
     p_created_at: createdAtOverride,
@@ -153,6 +155,10 @@ export async function handleCreate(
     // write is the exact call it was before; the RPC checks and writes in one
     // statement.
     ...(record.expectedVersion !== null ? { p_expected_version: record.expectedVersion } : {}),
+    // Maintenance edit (00126): sent only when set, so a plain write is the exact
+    // call it was before. The RPC updates the live row and keeps seen_count, or
+    // raises memory_not_found.
+    ...(record.edit ? { p_edit: true } : {}),
     // The calling key's restriction, BOTH axes (00068/00069). The RPC is the
     // last gate the edge cannot bypass — it runs on the service-role client, so
     // the `firstDeniedScope` refusal above is advisory — and the only place that
@@ -169,6 +175,7 @@ export async function handleCreate(
     const fieldError = translateRecordFieldDbError(error);
     if (fieldError instanceof RecordFieldError) return badRequest(fieldError.message, undefined, cors);
     if (fieldError instanceof VersionConflictError) return versionConflict(fieldError, cors);
+    if (fieldError instanceof MemoryNotFoundError) return notFound('Memory', cors);
     const mapped = translateDbError(error);
     if (mapped) return mapped.toResponse(cors);
     span.error(`DB: ${error.message}`);
@@ -206,6 +213,9 @@ export async function handleCreate(
     updated_at: row.updated_at, expires_at: row.expires_at, archived_at: row.archived_at,
     origin_repo: row.origin_repo, origin_branch: row.origin_branch, origin_commit: row.origin_commit,
     origin_pr: row.origin_pr, kind: row.kind, host: row.host, seen_count: row.seen_count ?? undefined,
+    // Acknowledges the edit (00126). A server that predates it drops the
+    // unknown `edit` key and upserts, so a client tells the two apart by this.
+    ...(record.edit ? { edit: true } : {}),
     attributes: row.attributes ?? undefined, content_type: row.content_type ?? undefined,
     supersedes: row.supersedes, version: row.version ?? undefined,
   };
