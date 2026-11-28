@@ -33,9 +33,9 @@
 // `dedupe` defaults to) — key-shape clustering (`dedupe --cluster-by-key`) is
 // a naming-debt signal, not a recurrence-candidate one, and stays dedupe's.
 //
-// Reads raw store rows directly (skipping `gather()`/`gatherStream()`'s
-// `normalizeEntry`, which drops `seen_count`) because this scan's whole
-// premise is the seen_count signal that `dedupe` never needed. Offline +
+// Reads raw store rows directly (skipping `gather()`/`gatherStream()`), so the
+// seen_count signal this scan rests on goes through `seenCountOf`'s coercion
+// of the raw column rather than the view row's verbatim copy. Offline +
 // Remote split and the same memory-safety population cap as `dedupe`.
 //
 // Registered `native` (CLI-only, no MCP tool, no REST route, no
@@ -63,8 +63,8 @@ function errorMessage(res) {
 }
 
 // Local store is exhaustive and has no server-side narrowing (mirrors
-// dedupe's local branch) — gather everything, then filter/cap in JS. Raw rows
-// (not run through normalizeEntry) so seen_count survives.
+// dedupe's local branch) — gather everything, then filter/cap in JS. Raw rows,
+// as the header explains.
 async function localRawEntries(store, scopes, { keyPrefix, since, until, max }) {
   const entries = [];
   const errored = [];
@@ -95,7 +95,7 @@ async function localRawEntries(store, scopes, { keyPrefix, since, until, max }) 
 }
 
 // Remote: paginate via cursor with the same param names gatherStream forwards
-// server-side, but skip normalizeEntry so seen_count survives.
+// server-side, but keep raw rows, as the header explains.
 async function remoteRawEntries(store, scopes, { keyPrefix, since, until, max }) {
   const entries = [];
   const errored = [];
@@ -142,9 +142,9 @@ async function remoteRawEntries(store, scopes, { keyPrefix, since, until, max })
   return { entries, errored, popCapped };
 }
 
-// Cluster raw entries (clusterDuplicatesBlocked only reads .scope/.key/.value,
-// so raw rows work unmodified), then re-attach seenCount/value per member —
-// the clusterer's own output narrows members down to {scope,key}.
+// Cluster raw entries (clusterDuplicatesBlocked accepts raw rows as well as
+// normalized ones), then re-map each member into the candidate shape
+// `rankCandidates` reads: seenCount, value, and tags.
 function buildCandidates(entries, { threshold, minSeenCount }) {
   const byAddress = new Map(entries.map((e) => [`${e.scope}::${e.key}`, e]));
   const clusters = clusterDuplicatesBlocked(entries, threshold).map((cl) => ({

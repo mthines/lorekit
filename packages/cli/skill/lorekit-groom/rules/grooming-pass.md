@@ -34,6 +34,40 @@ lorekit list --all --scope <scope> --max 500 # cap at 500 to get a representativ
 lorekit list --all --scope <scope> --since 2024-01-01  # only lessons created since that date
 ```
 
+Use `--json` when you will act on the list: every entry carries the lifecycle
+fields a grooming decision rests on, so you never need a `show` per lesson to
+find them:
+
+| Field | Signal |
+|-------|--------|
+| `seen_count` | recurrence — `>= 3` marks a promotion candidate for the slow tier |
+| `expires_at` | `null` means the lesson never decays — a TTL candidate |
+| `last_opened_at` / `opened_count` | when (and how often) an agent deliberately opened it |
+| `last_read_at` / `read_count` | when (and how often) it appeared in any listing, **including this pass's own** |
+
+**Judge use by `last_opened_at`, never by `last_read_at`.** Every `list`,
+`search`, and `dedupe` call (CLI or MCP) records a bulk read on each row it
+returns, so the survey you just ran refreshed `last_read_at` and raised
+`read_count` on every lesson in the scope. Only a deliberate single-lesson read
+(`show`, `memory.read`) moves the open counters — **and that includes your own**:
+every `lorekit show` this pass runs on a cluster member or a lint finding resets
+that lesson's `last_opened_at`. So save the `--json` survey first and judge use
+from that snapshot, never from a re-read after you have inspected a lesson.
+
+```text
+✗ prune where last_read_at is older than 90 days   # this pass's own list just set it to today
+✓ prune where last_opened_at is older than 90 days (or null) and seen_count is 1
+```
+
+A lesson nobody has opened in months, with `seen_count` 1, is a prune
+candidate; a lesson with a high `seen_count` is a promotion candidate, never a
+prune one. `null` means the store did not report the field (the local store has
+no read counters) — treat it as unknown, never as zero.
+
+```bash
+lorekit list --all --json --scope <scope> > lessons.json
+```
+
 The remote store is paginated (default 50 entries per `list` call, 100 per
 `lint`/`dedupe` call). `--all` drains every page; `--max` applies a hard cap
 (default 5000). `lint` and `dedupe` default to full-scope survey — add `--max`
@@ -121,6 +155,15 @@ carefully.
 entries it stops and prints a narrowing warning — use `--key-prefix` to focus
 on a key namespace, or `--since` to limit the date range. The `--max` flag sets
 a lower cap (default 5000, internal safety cap at 2000).
+
+Each `--json` member carries a `preview` of its value plus the same lifecycle
+fields as `list --json` (`seen_count`, `expires_at`, `created`, `updated`,
+`read_count`, `opened_count`, `last_read_at`, `last_opened_at`, `tags`,
+`version`). Use them to pick the keeper of a merge: the member with the highest
+`seen_count` and the most recent `last_opened_at` (from this dedupe output,
+taken before any `show`) is the one agents actually
+use, so merge the others into it and keep its key. The `seen_count` values of
+the merged lessons are lost on archive, so note their sum in the plan.
 
 For every cluster you intend to act on, read the members in full first:
 

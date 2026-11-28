@@ -98,9 +98,44 @@ export function normalizeEntry(e = {}) {
     // a remote deployed before the column, never a local read, which resolves
     // an absent version to 1.
     version: Number.isInteger(e.version) ? e.version : null,
+    // Lifecycle — what a grooming pass judges a lesson on: how often it recurred
+    // (`seen_count`, the promotion signal), when it expires, and whether any
+    // agent still reads or opens it (the prune signal). Verbatim, like the
+    // fields above; `null` when the store does not report one — the local store
+    // keeps `seen_count`/`expires_at` but no read counters.
+    ...lifecycleFields(e),
     // The ids of the records that supersede this one, newest first. Computed on
     // read and carried only when non-empty, as both stores report it.
     ...(Array.isArray(e.superseded_by) && e.superseded_by.length ? { superseded_by: e.superseded_by } : {}),
+  };
+}
+
+// The lifecycle fields `normalizeEntry` and every dedupe cluster member carry.
+function lifecycleFields(e) {
+  return {
+    seen_count: e.seen_count ?? null,
+    expires_at: e.expires_at ?? null,
+    read_count: e.read_count ?? null,
+    opened_count: e.opened_count ?? null,
+    last_read_at: e.last_read_at ?? null,
+    last_opened_at: e.last_opened_at ?? null,
+  };
+}
+
+// One dedupe cluster member: its address plus everything needed to pick the
+// keeper of a merge or decide a prune without a `show` per member. Reads either
+// a normalized entry or a raw store row (`invariants` clusters raw rows), so
+// both timestamp spellings are accepted.
+function clusterMember(e, key = e.key ?? null) {
+  return {
+    scope: e.scope ?? null,
+    key,
+    ...lifecycleFields(e),
+    created: e.created ?? e.created_at ?? null,
+    updated: e.updated ?? e.updated_at ?? null,
+    tags: Array.isArray(e.tags) ? e.tags : [],
+    version: Number.isInteger(e.version) ? e.version : null,
+    preview: preview(e.value),
   };
 }
 
@@ -506,7 +541,7 @@ export function similarity(a, b) {
 
 // Cluster likely-duplicate entries: any pair whose `similarity` is >= `threshold`
 // links its members into one cluster (transitively, via union-find). Returns
-// only clusters of 2+ members, each `{ members: [{ scope, key }], size,
+// only clusters of 2+ members, each `{ members: [{ scope, key, …lifecycle }], size,
 // minSimilarity, maxSimilarity }` — `minSimilarity` is the weakest link that
 // still met the threshold, a bounded signal of how tight the cluster is. Largest
 // clusters first. Pure — the `dedupe` command's core, thoroughly unit-tested.
@@ -515,6 +550,7 @@ export function clusterDuplicates(entries = [], threshold = 0.8) {
     i,
     scope: e.scope ?? null,
     key: e.key ?? null,
+    entry: e,
     tokens: tokenize(e.value),
   }));
   const parent = items.map((_, i) => i);
@@ -547,7 +583,7 @@ export function clusterDuplicates(entries = [], threshold = 0.8) {
     const idx = new Set(members.map((m) => m.i));
     const sims = pairs.filter((p) => idx.has(p.a) && idx.has(p.b)).map((p) => p.sim);
     clusters.push({
-      members: members.map((m) => ({ scope: m.scope, key: m.key })),
+      members: members.map((m) => clusterMember(m.entry)),
       size: members.length,
       minSimilarity: sims.length ? Math.min(...sims) : threshold,
       maxSimilarity: sims.length ? Math.max(...sims) : threshold,
@@ -578,7 +614,7 @@ export function compileKeyPattern(raw) {
 // coordinate-key duplicate FAMILIES — many `bucket::pr{N}-{commentId}::slug` rows
 // recorded for one review comment, whose slugs (and thus values) differ enough
 // that `clusterDuplicates`'s Jaccard sweep never links them. Returns only 2+
-// clusters, each `{ members: [{ scope, key }], size, keyGroup }`, largest first
+// clusters, each `{ members: [{ scope, key, …lifecycle }], size, keyGroup }`, largest first
 // (ties broken by keyGroup for stable output). A key that doesn't match the
 // pattern is left unclustered. Pure — O(n), no threshold.
 export function clusterByKeyPattern(entries = [], pattern) {
@@ -595,7 +631,7 @@ export function clusterByKeyPattern(entries = [], pattern) {
     if (!m) continue;
     const group = m[1] ?? m[0];
     if (!byGroup.has(group)) byGroup.set(group, []);
-    byGroup.get(group).push({ scope: e.scope ?? null, key });
+    byGroup.get(group).push(clusterMember(e, key));
   }
   const clusters = [];
   for (const [keyGroup, members] of byGroup) {
@@ -830,6 +866,7 @@ export function clusterDuplicatesBlocked(entries = [], threshold = 0.8) {
     i,
     scope: e.scope ?? null,
     key: e.key ?? null,
+    entry: e,
     tokens: tokenize(e.value),
   }));
 
@@ -888,7 +925,7 @@ export function clusterDuplicatesBlocked(entries = [], threshold = 0.8) {
     const idx = new Set(members.map((m) => m.i));
     const sims = pairs.filter((p) => idx.has(p.a) && idx.has(p.b)).map((p) => p.sim);
     clusters.push({
-      members: members.map((m) => ({ scope: m.scope, key: m.key })),
+      members: members.map((m) => clusterMember(m.entry)),
       size: members.length,
       minSimilarity: sims.length ? Math.min(...sims) : threshold,
       maxSimilarity: sims.length ? Math.max(...sims) : threshold,
