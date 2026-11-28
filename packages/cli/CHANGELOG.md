@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.79.0](https://github.com/mthines/lorekit/compare/cli-v1.78.0...cli-v1.79.0) (2026-11-28)
+
+
+### Features
+
+* **cli:** list and dedupe --json carry lesson lifecycle fields ([#759](https://github.com/mthines/lorekit/issues/759)) ([d7a70ba](https://github.com/mthines/lorekit/commit/d7a70ba0ca8d366b2c50a0e5847ecb1465f7c060))
+* **telemetry:** export per-table DB counters and trace the read-counter RPC ([#758](https://github.com/mthines/lorekit/issues/758)) ([38bde3d](https://github.com/mthines/lorekit/commit/38bde3dc10030755353439b241cac2f2175dee40))
+
 ## [1.78.0](https://github.com/mthines/lorekit/compare/cli-v1.77.0...cli-v1.78.0) (2026-11-09)
 
 
