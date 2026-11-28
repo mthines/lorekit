@@ -438,6 +438,10 @@ class RemoteStore {
       // Surfaced for the caller's branching (`not_found` on an edit of a
       // missing key, `version_conflict`), from the error body's `code`.
       code: res.error?.code ?? null,
+      // Whether the server applied the write as an edit (00126 echoes
+      // `edit: true`). Only reported for an edit request; an older server
+      // ignores the flag, which reads here as `false`.
+      ...(edit && res.ok ? { edit: res.data?.edit === true } : {}),
     };
   }
 

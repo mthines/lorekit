@@ -101,7 +101,7 @@ function stubbedRemote(answer) {
 }
 
 test('remote store: an edit sends edit: true and returns the kept seen_count', async () => {
-  const { store, seen } = stubbedRemote({ ok: true, data: { version: 3, seen_count: 4 } });
+  const { store, seen } = stubbedRemote({ ok: true, data: { version: 3, seen_count: 4, edit: true } });
   const r = await store.write({ scope: 'global', key: 'k', value: 'v', edit: true });
   assert.equal(seen[0].path, '/memories');
   assert.equal(seen[0].method, 'POST');
@@ -109,6 +109,14 @@ test('remote store: an edit sends edit: true and returns the kept seen_count', a
   assert.equal('tags' in seen[0].body, false, 'omitted tags must stay omitted so the server keeps them');
   assert.equal(r.ok, true);
   assert.equal(r.seen_count, 4);
+  assert.equal(r.edit, true);
+});
+
+test('remote store: a server that ignores edit reports edit: false', async () => {
+  const { store } = stubbedRemote({ ok: true, data: { version: 2, seen_count: 2 } });
+  const r = await store.write({ scope: 'global', key: 'k', value: 'v', edit: true });
+  assert.equal(r.ok, true);
+  assert.equal(r.edit, false);
 });
 
 test('remote store: a plain write sends no edit key', async () => {

@@ -213,6 +213,9 @@ export async function handleCreate(
     updated_at: row.updated_at, expires_at: row.expires_at, archived_at: row.archived_at,
     origin_repo: row.origin_repo, origin_branch: row.origin_branch, origin_commit: row.origin_commit,
     origin_pr: row.origin_pr, kind: row.kind, host: row.host, seen_count: row.seen_count ?? undefined,
+    // Acknowledges the edit (00126). A server that predates it drops the
+    // unknown `edit` key and upserts, so a client tells the two apart by this.
+    ...(record.edit ? { edit: true } : {}),
     attributes: row.attributes ?? undefined, content_type: row.content_type ?? undefined,
     supersedes: row.supersedes, version: row.version ?? undefined,
   };

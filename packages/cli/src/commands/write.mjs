@@ -449,6 +449,15 @@ export async function write(args) {
   // result, the local store on the entry it wrote. Null when unknown.
   const version = result.version ?? result.entry?.version ?? null;
 
+  // A server that predates 00126 drops the unknown `edit` key and does a plain
+  // upsert: it counts a sighting, or creates a missing key. The remote store
+  // reports `edit: false` when the server did not acknowledge the edit.
+  if (isEdit && result.edit === false) {
+    err(`${c.red('Error:')} the ${storeName} store does not support --edit: it wrote ${scope}::${key} as a normal write, which counted a sighting or created the key.`);
+    err(`Upgrade the server before editing; check the memory with ${c.cyan(`lorekit show ${scope}::${key}`)}.`);
+    return { exitCode: 1, 'lorekit.cli.write.store': storeName, 'lorekit.cli.write.edit': true, 'lorekit.cli.write.edit_unsupported': true };
+  }
+
   if (args.json) {
     log(JSON.stringify({
       scope,

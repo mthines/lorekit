@@ -471,7 +471,8 @@ applies no configured default TTL, so it never restamps where a lesson came from
 a memory: on a key with no live memory it writes nothing and exits `1` with
 `no live memory <scope::key> to edit. Nothing was written.` `--json` adds `edit` and `seen_count`.
 Works against both stores; remotely it is `POST /memories` with `"edit": true` (`404 not_found` on a
-missing key).
+missing key). The server acknowledges the edit with `"edit": true` in its response; against a server
+that predates it, which writes normally, `--edit` exits `1` instead of reporting an edit.
 
 ```bash
 lorekit write repo::acme/api::db-migrations-need-explicit-tx "<the fixed body>" --edit   # seen_count unchanged

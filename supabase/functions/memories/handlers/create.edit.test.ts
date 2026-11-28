@@ -77,6 +77,7 @@ Deno.test('POST /memories with edit: true sends p_edit and NULL tags when tags a
   assertEquals(calls[0].p_edit, true);
   assertEquals(calls[0].p_tags, null);
   assertEquals(json?.seen_count, 2);
+  assertEquals(json?.edit, true);
 });
 
 Deno.test('POST /memories with edit: true and tags sends those tags', async () => {
@@ -85,9 +86,10 @@ Deno.test('POST /memories with edit: true and tags sends those tags', async () =
 });
 
 Deno.test('a plain POST /memories sends no p_edit and an empty tag list, as before', async () => {
-  const { status, calls } = await post({ scope: 'global', key: 'k', value: 'v' }, { data: ROW, error: null });
+  const { status, json, calls } = await post({ scope: 'global', key: 'k', value: 'v' }, { data: ROW, error: null });
   assertEquals(status, 201);
   assertEquals('p_edit' in calls[0], false);
+  assertEquals(json?.edit, undefined);
   assertEquals(calls[0].p_tags, []);
 });
 
