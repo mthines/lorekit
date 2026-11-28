@@ -122,8 +122,9 @@ archiving and deleting always go through `memory.delete` / `memory.archive`.
 | List all lessons across large scopes | `lorekit list --all [--max <n>] [--since <date>] [--until <date>]` | CLI (read) |
 | Read one lesson in full | `lorekit show <scope::key> [--json]` | CLI (read) |
 | Compare offline vs remote | `lorekit diff` | CLI (read) |
-| Write the merged/consolidated lesson | `memory.write` (or `lorekit write`) | MCP / CLI |
-| Set / clear an expiry | `memory.write { ttl_days }` / `{ clear_ttl: true }` | MCP / CLI (`--ttl-days` / `--clear-ttl`) |
+| Fix a lesson in place (no sighting counted) | `memory.write { …, edit: true }` (or `lorekit write --edit`) | MCP / CLI |
+| Write a merge into a new key | `memory.write` (or `lorekit write`) | MCP / CLI |
+| Set / clear an expiry | `memory.write { ttl_days, edit: true }` / `{ clear_ttl: true, edit: true }` | MCP / CLI (`--ttl-days` / `--clear-ttl` with `--edit`) |
 | Archive a lesson (reversible) | `memory.archive` (or `memory.delete`) | **MCP only** |
 | Hard-delete a lesson (permanent) | `memory.delete { force: true }` | **MCP only** |
 
@@ -182,7 +183,7 @@ who may do it unattended:
 
 | Work | Runs as | Mutates? |
 |------|---------|----------|
-| Prune lessons nobody opens | a retention policy, `review` mode first, then `auto` for the nightly sweep | archive only |
+| Prune lessons nobody opens | a retention policy, `review` mode first, then `auto` for the nightly sweep — `auto` only in a scope read one lesson at a time, since `list` / `search` loads never count as opens | archive only |
 | Report lint, dedupe, promotion, and prune candidates | a weekly scheduled job with a read-only token | never |
 | Merge, promote into a rule, delete | a human, from that report | after confirmation |
 

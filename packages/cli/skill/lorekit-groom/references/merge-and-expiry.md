@@ -76,6 +76,11 @@ Use it to confirm a merged lesson will actually surface where you intend.
 ## 3. Choosing the key
 
 - Reuse a good survivor's key when one exists (see §1 — keeps links alive).
+  Write the merged value onto it with an edit write
+  (`memory.write { scope, key, value, tags, edit: true }` or
+  `lorekit write <scope::key> <value> --edit`): a plain write to an existing key
+  adds 1 to its `seen_count`, which records your merge as a recurrence.
+  A merge into a new key is a plain write; an edit of a missing key fails.
 - Otherwise write a short, specific, hyphenated key that names the *observation*,
   not the symptom: `db-migrations-need-explicit-tx`, not `migration-bug` or
   `note-3`. A key is how a future agent recognises the lesson at a glance in a
@@ -84,9 +89,12 @@ Use it to confirm a merged lesson will actually surface where you intend.
 ## 4. Expiry tiers (TTL)
 
 `ttl_days` (1–365) auto-expires a lesson that many days after the write, after
-which it is hidden from reads. Set it via `memory.write { ttl_days }` or
-`lorekit write --ttl-days <n>`; clear it with `{ clear_ttl: true }` /
-`--clear-ttl` to make a lesson permanent again.
+which it is hidden from reads. Set it on an existing lesson with an edit write,
+`memory.write { scope, key, value, ttl_days, edit: true }` or
+`lorekit write <scope::key> <value> --ttl-days <n> --edit`, sending the stored
+value unchanged; clear it with `{ clear_ttl: true, edit: true }` /
+`--clear-ttl --edit` to make a lesson permanent again. Without `edit`, the TTL
+change also counts a sighting.
 
 Match the TTL to how long the lesson's *truth* lasts, not to how old it is:
 

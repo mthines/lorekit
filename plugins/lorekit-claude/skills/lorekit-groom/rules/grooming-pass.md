@@ -105,9 +105,21 @@ Findings are structural, not semantic — each names its rule:
 
 These are the cheapest wins and the least controversial, so clear them first.
 For each: either **fix it in place** (rewrite a too-short value into a real
-observation, trim whitespace — a `memory.write` to the same `scope`+`key`
-updates in place) or, if the lesson is genuinely empty of meaning, **queue it for
-removal** in the plan. `lint` exits non-zero while findings remain, which also
+observation, trim whitespace — an edit write, `memory.write { scope, key, value,
+edit: true }` or `lorekit write <scope::key> <value> --edit`) or, if the lesson
+is genuinely empty of meaning, **queue it for removal** in the plan.
+
+**Every in-place fix is an edit write, never a plain write.** A plain
+`memory.write` to an existing key counts a sighting: it adds 1 to `seen_count`,
+so a groomer's fix records a recurrence that never happened and can push a
+one-off lesson over the promotion bar. `edit: true` changes the value, tags, and
+fields, keeps `seen_count`, keeps the stored tags when you omit `tags`, and fails
+on a key with no live memory instead of creating one.
+
+```text
+✗ memory.write { scope, key, value: "<trimmed>" }               # seen_count 1 → 2: a fake recurrence
+✓ memory.write { scope, key, value: "<trimmed>", edit: true }   # seen_count stays 1
+``` `lint` exits non-zero while findings remain, which also
 makes it a clean CI gate — a passing `lint` is your Phase 6 proof.
 
 ### Cleaning a `hidden-metadata` finding (fold, then strip)
@@ -129,8 +141,9 @@ homes, then strip the block:
    - `expires=…` / `ttl=…` → a `ttl_days` on the write.
 3. **Rewrite the body as pure markdown** to the lesson shape (takeaway title →
    `Applies when` → bold-labelled paragraphs), with the `<!--`/front-matter/header
-   gone, via a `memory.write` to the same `scope`+`key` (updates in place, carrying
-   the recovered tags/fields).
+   gone, via an edit write to the same `scope`+`key` (`memory.write { …, edit: true }`
+   or `lorekit write --edit`), carrying the recovered tags and fields. Pass the
+   full tag list you want: a `tags` you send replaces the stored list.
 4. **Re-lint** the record to confirm `hidden-metadata` no longer fires.
 
 Do this whenever a pass surfaces the finding — that is how the store stops
@@ -211,12 +224,17 @@ Apply in an order that never loses information, because the store is the only
 record — there is no undo for a hard delete:
 
 1. **Fixes and merges first — write before you remove.** Write the corrected or
-   merged lesson (`memory.write`, or `lorekit write`). Confirm it landed
+   merged lesson. A fix, or a merge into a surviving member's key, rewrites an
+   existing lesson: use the edit write (`memory.write { …, edit: true }` or
+   `lorekit write --edit`), so the keeper's `seen_count` is not raised by your
+   own write. Only a merge into a **new** key is a plain write (an edit of a
+   key with no live memory fails). Confirm it landed
    (`lorekit show <scope::key>`) *before* removing any source lesson, so a
    failure mid-way leaves the originals intact rather than a gap.
-2. **Expiries.** `memory.write { scope, key, ttl_days }` on the lessons that get
-   a TTL, or `{ clear_ttl: true }` to make one permanent again. Same key updates
-   in place — no new lesson is created.
+2. **Expiries.** `memory.write { scope, key, value, ttl_days, edit: true }` on
+   the lessons that get a TTL, or `{ …, clear_ttl: true, edit: true }` to make
+   one permanent again. Send the stored value unchanged; the edit updates in
+   place, creates no lesson, and counts no sighting.
 3. **Removals last.** Archive (`memory.archive`, reversible) for anything a
    future run might still want; `memory.delete { force: true }` (permanent) only
    for the junk explicitly approved for deletion. Remove the merge sources here,
