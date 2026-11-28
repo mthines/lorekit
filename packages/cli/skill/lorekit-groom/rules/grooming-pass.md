@@ -49,7 +49,10 @@ find them:
 `search`, and `dedupe` call (CLI or MCP) records a bulk read on each row it
 returns, so the survey you just ran refreshed `last_read_at` and raised
 `read_count` on every lesson in the scope. Only a deliberate single-lesson read
-(`show`, `memory.read`) moves the open counters.
+(`show`, `memory.read`) moves the open counters — **and that includes your own**:
+every `lorekit show` this pass runs on a cluster member or a lint finding resets
+that lesson's `last_opened_at`. So save the `--json` survey first and judge use
+from that snapshot, never from a re-read after you have inspected a lesson.
 
 ```text
 ✗ prune where last_read_at is older than 90 days   # this pass's own list just set it to today
@@ -157,7 +160,8 @@ Each `--json` member carries a `preview` of its value plus the same lifecycle
 fields as `list --json` (`seen_count`, `expires_at`, `created`, `updated`,
 `read_count`, `opened_count`, `last_read_at`, `last_opened_at`, `tags`,
 `version`). Use them to pick the keeper of a merge: the member with the highest
-`seen_count` and the most recent `last_opened_at` is the one agents actually
+`seen_count` and the most recent `last_opened_at` (from this dedupe output,
+taken before any `show`) is the one agents actually
 use, so merge the others into it and keep its key. The `seen_count` values of
 the merged lessons are lost on archive, so note their sum in the plan.
 
