@@ -144,7 +144,7 @@ async function remoteRawEntries(store, scopes, { keyPrefix, since, until, max })
 
 // Cluster raw entries (clusterDuplicatesBlocked only reads .scope/.key/.value,
 // so raw rows work unmodified), then re-attach seenCount/value per member —
-// the clusterer's own output narrows members down to {scope,key}.
+// re-mapped into the candidate shape `rankCandidates` reads.
 function buildCandidates(entries, { threshold, minSeenCount }) {
   const byAddress = new Map(entries.map((e) => [`${e.scope}::${e.key}`, e]));
   const clusters = clusterDuplicatesBlocked(entries, threshold).map((cl) => ({
